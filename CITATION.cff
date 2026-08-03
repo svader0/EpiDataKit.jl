@@ -1,0 +1,45 @@
+# Citation File Format — https://citation-file-format.github.io
+#
+# GitHub reads this natively and adds a "Cite this repository" button to the repo page,
+# which generates BibTeX and APA on demand. Zenodo also reads it when archiving a release,
+# so keeping it accurate means the minted DOI carries the right metadata.
+#
+# On each release: bump `version` and `date-released` to match the git tag. Once a Zenodo
+# DOI exists, uncomment `doi` below — that is what makes the citation resolve to a fixed
+# snapshot rather than to a moving branch.
+
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "EpiDataKit.jl: Surveillance data ingestion for Julia"
+abstract: >-
+  A Julia package for retrieving public health surveillance data from the Delphi Epidata
+  API, standardising it into a single tidy schema, and persisting it as Apache Arrow for
+  downstream simulation and inference packages. Handles MMWR epiweek conversion, geographic
+  identifier normalisation, coded missingness, and data revisions, so that measurements can
+  be reconstructed as they stood on a given publication date.
+type: software
+
+authors:
+  - family-names: Vader
+    given-names: Sam
+    email: samvader13@gmail.com
+    # If you have an ORCID, add it here — it disambiguates you from everyone else with
+    # your name and is expected by most journals. Free at https://orcid.org
+    # orcid: "https://orcid.org/0000-0000-0000-0000"
+
+version: 0.1.0
+date-released: "2026-08-03"
+license: MIT
+repository-code: "https://github.com/svader0/EpiDataKit.jl"
+url: "https://github.com/svader0/EpiDataKit.jl"
+
+# Uncomment once the first release is archived on Zenodo.
+# doi: "10.5281/zenodo.XXXXXXX"
+
+keywords:
+  - epidemiology
+  - public health
+  - disease surveillance
+  - data ingestion
+  - apache arrow
+  - julia

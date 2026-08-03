@@ -1,0 +1,10 @@
+[deps]
+Arrow = "69666777-d1a9-59fb-9406-91d4454c9d45"
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+EpiDataKit = "9350bdd5-99b5-4ff7-90d3-477c4c1035bf"
+JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+StructArrays = "09ab397b-f2b6-538f-b94a-2f83cf4a842a"
+Tables = "bd369af6-aec1-5ad0-b16a-f7cc5008161c"

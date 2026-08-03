@@ -1,1 +1,6 @@
 /Manifest*.toml
+**/Manifest*.toml
+
+# Compiled output from `go build` in test/portability_check. `go run` needs no artifact,
+# and the build isn't cross-platform anyways.
+/test/portability_check/portabilitycheck
