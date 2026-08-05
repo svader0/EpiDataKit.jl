@@ -1,6 +1,6 @@
 # EpiDataKit
 
-[![Build Status](https://github.com/svader0/EpiDataKit.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/svader0/EpiDataKit.jl/actions/workflows/CI.yml?query=branch%3Amain)
+[![Build Status](https://github.com/svader0/EpiDataKit.jl/actions/workflows/CI.yml/badge.svg?branch=master)](https://github.com/svader0/EpiDataKit.jl/actions/workflows/CI.yml?query=branch%3Amaster)
 
 EpiDataKit is a Julia package that streamlines the collection, standardization, and use of data from the Delphi Epidata API. It provides a simple interface to the API, including functions for downloading data, parsing results, and converting them into a tidy table. The Epidata API provides access to epidemiological surveillance data for influenza, COVID-19, and other diseases, drawn from government sources such as the CDC, private partners, public datasets, etc. It is maintained by Carnegie Mellon University's Delphi Research Group. 
 
