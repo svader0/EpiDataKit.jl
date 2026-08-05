@@ -3,7 +3,7 @@ using DataFrames
 using Dates
 using StructArrays
 using Tables
-using EpiDataKit: save, load, decode_response, mock_response, standardize,
+using EpiDataKit: save, load, scan, provenance, decode_response, mock_response, standardize,
                   DICT_ENCODED_COLUMNS, empty_table
 
 # A table exercising every column type that can go wrong on the way to disk: both enums,
@@ -13,13 +13,13 @@ function sample_table()
     obs = [
         EpiObservation(:nssp, :pct_ed_visits_covid, STATE, "ca",
                        Date(2026, 5, 17), Date(2026, 5, 23),
-                       0.07, missing, missing, Date(2026, 8, 1), NOT_MISSING),
+                       0.07, missing, missing, Date(2026, 8, 1), 10, NOT_MISSING),
         EpiObservation(:nssp, :pct_ed_visits_covid, STATE, "ny",
                        Date(2026, 5, 17), Date(2026, 5, 23),
-                       missing, 0.5, 100.0, Date(2026, 8, 1), CENSORED),
+                       missing, 0.5, 100.0, Date(2026, 8, 1), 10, CENSORED),
         EpiObservation(:jhu_csse, :confirmed_incidence_num, COUNTY, "06075",
                        Date(2020, 6, 1), Date(2020, 6, 1),
-                       2437.0, missing, missing, missing, NOT_MISSING),
+                       2437.0, missing, missing, missing, missing, NOT_MISSING),
     ]
     return StructArray(obs)
 end
@@ -40,10 +40,10 @@ end
         end
     end
 
-    @testset "enums come back as enums, not Int8" begin
+    @testset "enum columns come back as enums" begin
         # Without an Arrow extension annotation these columns decode as raw Int8, so
         # `load` reconstructs them explicitly. If that step is ever dropped, the table
-        # would still look plausible while comparing unequal — hence an explicit check.
+        # would still look plausible while comparing unequal, hence an explicit check.
         mktempdir() do dir
             back = load(save(tbl, joinpath(dir, "t.arrow")))
             @test back.geo_level isa Vector{GeoLevel}
@@ -84,7 +84,7 @@ end
         end
     end
 
-    @testset "enum columns decode as integers, not as a Julia type" begin
+    @testset "enum columns decode as plain integers" begin
         # The portability contract: a foreign reader must not need this package. Enums are
         # registered with ArrowTypes as Int8 and given no extension name, so they arrive as
         # ordinary integers. `test/portability_check/` verifies the other half of this from
@@ -108,7 +108,7 @@ end
 
     @testset "load rejects files that are not ours, with a typed error" begin
         # Regression: these used to surface as a bare `KeyError: key :source not found`
-        # or an `ArgumentError` from the enum constructor — neither an EpiDataKitError,
+        # or an `ArgumentError` from the enum constructor, neither an EpiDataKitError,
         # so a caller catching this package's errors would miss them entirely.
         mktempdir() do dir
             Arrow.write(joinpath(dir, "foreign.arrow"), (a = [1, 2], b = ["x", "y"]))
@@ -127,10 +127,10 @@ end
         end
     end
 
-    @testset "an appended enum value is explained, not asserted" begin
+    @testset "an unknown enum value says to upgrade" begin
         # GeoLevel and MissingCode are documented as append-only, so a file written by a
         # newer build can legitimately carry a level this one has never seen. Refusing is
-        # right — guessing would misattribute the row — but the reader has to be told that
+        # right (guessing would misattribute the row), but the reader has to be told that
         # upgrading is the fix.
         mktempdir() do dir
             cols = Tables.columntable(sample_table())
@@ -179,10 +179,79 @@ end
             codes = [MissingCode(mod(Int8(i), Int8(length(instances(MissingCode)))))
                      for i in eachindex(lvls)]
             obs = [EpiObservation(:s, :x, lvls[i], "ca", Date(2020, 1, 1), Date(2020, 1, 1),
-                                  1.0, missing, missing, missing, codes[i])
+                                  1.0, missing, missing, missing, missing, codes[i])
                    for i in eachindex(lvls)]
             t = StructArray(obs)
             @test load(save(t, joinpath(dir, "all.arrow"))) == t
+        end
+    end
+
+    @testset "scan is load without the copy" begin
+        mktempdir() do dir
+            p = save(tbl, joinpath(dir, "t.arrow"))
+            lazy = scan(p)
+
+            @test lazy == load(p)
+            @test lazy == tbl
+            @test eltype(lazy) === EpiObservation
+            @test lazy[1] isa EpiObservation
+            @test lazy.geo_level[1] == STATE
+            @test lazy.missing_code[2] == CENSORED
+            @test lazy.geo_id[3] == "06075"
+            @test lazy.value[2] === missing
+            @test lazy.issue[3] === missing
+            # Still a Tables.jl source, so DataFrames and friends work off it unchanged.
+            @test Tables.istable(lazy)
+            @test Set(Tables.columnnames(lazy)) == Set(fieldnames(EpiObservation))
+        end
+    end
+
+    @testset "scan checks enum columns at open" begin
+        # The lazy path converts on access, so without an eager check an unknown value
+        # would surface as a bare ArgumentError from wherever the row was first touched.
+        mktempdir() do dir
+            cols = Tables.columntable(sample_table())
+            p = joinpath(dir, "future.arrow")
+            Arrow.write(p, merge(cols, (geo_level = Int8[9, 9, 9],)))
+
+            err = try; scan(p); catch e; e; end
+            @test err isa StoreError
+            @test occursin("newer version", err.msg)
+
+            @test_throws StoreError scan(joinpath(dir, "does_not_exist.arrow"))
+            Arrow.write(joinpath(dir, "foreign.arrow"), (a = [1, 2],))
+            @test_throws StoreError scan(joinpath(dir, "foreign.arrow"))
+        end
+    end
+
+    @testset "provenance records who wrote the file and when" begin
+        mktempdir() do dir
+            p = save(tbl, joinpath(dir, "t.arrow"))
+            pr = EpiDataKit.provenance(p)
+
+            @test pr.schema == EpiDataKit.SCHEMA_VERSION
+            @test pr.version == string(pkgversion(EpiDataKit))
+            # Parses as a UTC timestamp, and is not in the future.
+            ts = DateTime(pr.saved_at, dateformat"yyyy-mm-dd\THH:MM:SS\Z")
+            @test ts <= now(UTC) + Second(5)
+            @test ts > now(UTC) - Hour(1)
+
+            # Metadata must not disturb the data or the portability contract.
+            @test load(p) == tbl
+            t = Arrow.Table(p)
+            @test eltype(t.geo_level) <: Integer
+        end
+    end
+
+    @testset "a file without provenance reads back missing" begin
+        # Nothing has shipped yet, but a foreign Arrow file with our columns is legitimate.
+        mktempdir() do dir
+            p = joinpath(dir, "bare.arrow")
+            Arrow.write(p, Tables.columntable(sample_table()))
+            pr = EpiDataKit.provenance(p)
+            @test pr.saved_at === missing
+            @test pr.version === missing
+            @test pr.schema === missing
         end
     end
 
@@ -199,7 +268,7 @@ end
 end
 
 @testset "DataFrames interop" begin
-    # DataFrames is deliberately not a dependency — downstream modelling packages that
+    # DataFrames is deliberately not a dependency: downstream modeling packages that
     # only want to read an Arrow file should not pay for its load time. But the
     # conversion has to actually work, so it is verified rather than merely claimed.
     tbl = sample_table()

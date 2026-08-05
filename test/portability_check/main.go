@@ -1,20 +1,9 @@
-// Command portabilitycheck verifies that an EpiDataKit Arrow file is readable without
-// anything Julia-specific.
+// This Go script is a quick little sanity check that Arrow files produced
+// by the package are portable beyond Julia.
 //
 //	go -C test/portability_check run . "$PWD/file.arrow"
 //
-// The module lives in this subdirectory so the Julia package root stays free of Go
-// scaffolding, which is why the invocation needs -C and an absolute path.
-//
-// Writing Arrow is only worth it if the result is genuinely portable, and that is easy to
-// break by accident — registering an Arrow extension name for the enums would make them
-// round-trip more neatly in Julia while leaving foreign readers holding a type they have
-// never heard of. This runs from outside Julia, where such a mistake is actually visible.
-//
-// Go is deliberate here rather than incidental. arrow-go is an independent native
-// implementation of the format, not a binding to the same C++ library, so agreement
-// between it and Arrow.jl is stronger evidence of portability than agreement between two
-// wrappers around shared code would be.
+// .
 package main
 
 import (
@@ -29,18 +18,14 @@ import (
 )
 
 // extensionNameKey is the schema-level metadata Arrow uses to tag a logical type layered
-// on top of a storage type. Its presence on a column means a reader needs out-of-band
-// knowledge to interpret that column correctly.
+// on top of a storage type.
 const extensionNameKey = "ARROW:extension:name"
 
-// plainIntColumns must arrive as ordinary integers with no extension annotation. These
-// are the Julia enums; if they ever gained an extension name, a foreign reader would need
-// EpiDataKit itself to make sense of them, which defeats the point of writing Arrow.
 var plainIntColumns = []string{"geo_level", "missing_code"}
 
 var expectedColumns = []string{
 	"source", "signal", "geo_level", "geo_id", "period_start", "period_end",
-	"value", "stderr", "sample_size", "issue", "missing_code",
+	"value", "stderr", "sample_size", "issue", "lag", "missing_code",
 }
 
 // storageType looks through dictionary encoding to the type a consumer actually decodes.
@@ -138,8 +123,7 @@ func run(path string) []string {
 		}
 	}
 
-	// Print the schema as the reader sees it, so a human can eyeball what foreign
-	// consumers actually get.
+	// print schema for inspection
 	var rows int64
 	for _, fld := range schema.Fields() {
 		note := ""
@@ -149,8 +133,7 @@ func run(path string) []string {
 		fmt.Printf("  %-14s %-48s%s\n", fld.Name, fld.Type.String(), note)
 	}
 
-	// Values must survive, not merely the schema. A county FIPS that lost its leading
-	// zero is a different, real county.
+	// check that geo_id values are as expected
 	geoIdx := schema.FieldIndices("geo_id")
 	for i := 0; i < r.NumRecords(); i++ {
 		rec, err := r.RecordBatch(i)

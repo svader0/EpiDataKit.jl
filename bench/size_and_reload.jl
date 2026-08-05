@@ -1,18 +1,9 @@
-# Measures what the storage layer is actually for: how big the cache is, and how cheap it
+# Bench mark to read how big the cache is, and how cheap it
 # is to read back.
 #
 # Run with:
 #     julia --project=bench bench/size_and_reload.jl
 #
-# Two results here drove design decisions in src/store.jl, so this file exists to keep
-# them reproducible rather than asserted:
-#
-#   1. Dictionary-encoding every column (`Arrow.write(...; dictencode = true)`) is worse
-#      than encoding only the columns that repeat, because it also builds dictionaries
-#      over high-entropy floats.
-#   2. Compression and zero-copy mmap are mutually exclusive. A zstd file has to
-#      decompress into fresh memory on open, so it is smaller but markedly slower and
-#      allocation-heavy to read. The cache defaults to uncompressed for that reason.
 
 using Arrow
 using BenchmarkTools
@@ -51,13 +42,16 @@ function synthetic_table(n::Int = N; seed::Int = rand_seed)
     stderr = Vector{Union{Float64,Missing}}(undef, n)
     sample = Vector{Union{Float64,Missing}}(undef, n)
     issue = Vector{Union{Date,Missing}}(undef, n)
+    lag = Vector{Union{Int,Missing}}(undef, n)
     mcode = Vector{MissingCode}(undef, n)
     @inbounds for i in 1:n
         miss = rand(rng) < 0.05
         value[i] = miss ? missing : round(rand(rng) * 100; digits = 6)
         stderr[i] = rand(rng) < 0.5 ? missing : round(rand(rng); digits = 6)
         sample[i] = rand(rng) < 0.5 ? missing : round(rand(rng) * 5000; digits = 2)
-        issue[i] = rand(rng) < 0.02 ? missing : ends[i] + Day(7 * rand(rng, 1:12))
+        weeks = rand(rng, 1:12)
+        issue[i] = rand(rng) < 0.02 ? missing : ends[i] + Day(7 * weeks)
+        lag[i] = issue[i] === missing ? missing : weeks
         mcode[i] = miss ? CENSORED : NOT_MISSING
     end
 
@@ -72,6 +66,7 @@ function synthetic_table(n::Int = N; seed::Int = rand_seed)
         stderr = stderr,
         sample_size = sample,
         issue = issue,
+        lag = lag,
         missing_code = mcode,
     ))
 end
@@ -85,6 +80,7 @@ function write_json(tbl, path)
             period_start = string(o.period_start), period_end = string(o.period_end),
             value = o.value, stderr = o.stderr, sample_size = o.sample_size,
             issue = o.issue === missing ? nothing : string(o.issue),
+            lag = o.lag,
             missing_code = Int(o.missing_code),
         ) for o in tbl])
     end
@@ -96,13 +92,8 @@ mib(path) = filesize(path) / 1024^2
 
 """Open the file and do some arbitrary work on it."""
 scan_arrow(path) = sum(skipmissing(Arrow.Table(path).value))
-
-# The same scan through the package's own reader. `load` deliberately copies every column
-# into an ordinary Julia vector so the result's element type is exactly `EpiObservation`
-# and `load(save(x)) == x` holds — which means it does not inherit the mmap benefit the
-# uncompressed format exists to provide. Measured here so the README can state the cost
-# rather than imply it away, and so a future lazy `load` has a baseline to beat.
 scan_load(path) = sum(skipmissing(EpiDataKit.load(path).value))
+scan_scan(path) = sum(skipmissing(EpiDataKit.scan(path).value))
 
 function scan_json(path)
     rows = JSON3.read(read(path, String))
@@ -148,9 +139,11 @@ function main()
     b_zstd = @benchmark scan_arrow($p_zstd) samples=20 evals=1 seconds=60
     b_plain = @benchmark scan_arrow($p_plain) samples=20 evals=1 seconds=60
     b_load = @benchmark scan_load($p_plain) samples=20 evals=1 seconds=60
+    b_scan = @benchmark scan_scan($p_plain) samples=20 evals=1 seconds=60
 
     for (name, b) in (("JSON", b_json), ("Arrow, zstd", b_zstd),
                       ("Arrow, uncompressed", b_plain),
+                      ("EpiDataKit.scan", b_scan),
                       ("EpiDataKit.load", b_load))
         @printf("  %-22s %9.3f ms   %9.2f MiB allocated\n",
                 name, minimum(b).time / 1e6, minimum(b).memory / 1024^2)
@@ -159,10 +152,10 @@ function main()
     @printf("  uncompressed is %.0fx faster to scan than zstd, and allocates %.0fx less\n",
             minimum(b_zstd).time / minimum(b_plain).time,
             minimum(b_zstd).memory / max(minimum(b_plain).memory, 1))
-    @printf("  load() costs %.0fx the time and %.0fx the memory of the lazy scan, in\n",
-            minimum(b_load).time / minimum(b_plain).time,
-            minimum(b_load).memory / max(minimum(b_plain).memory, 1))
-    println("  exchange for plain Julia vectors and exact round-trip equality")
+    @printf("  load() costs %.0fx the time and %.0fx the memory of scan(), in\n",
+            minimum(b_load).time / minimum(b_scan).time,
+            minimum(b_load).memory / max(minimum(b_scan).memory, 1))
+    println("  exchange for plain mutable vectors; scan() is read-only and mmap-backed")
 
     rm(dir; recursive = true)
 end
