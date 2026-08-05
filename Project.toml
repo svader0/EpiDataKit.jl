@@ -19,17 +19,22 @@ Arrow = "2.8"
 ArrowTypes = "2.3"
 Base64 = "1"
 CSV = "0.10"
+CodecZlib = "0.7"
 DataFrames = "1"
 Dates = "1"
-HTTP = "2"
+HTTP = "2.1"
 JSON3 = "1.14"
+Logging = "1"
 StructArrays = "0.6, 0.7"
 Tables = "1.13"
+Test = "1"
 julia = "1.10"
 
 [extras]
+CodecZlib = "944b1d66-785c-5afd-91f1-9de20f533193"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["DataFrames", "Test"]
+test = ["CodecZlib", "DataFrames", "Logging", "Test"]

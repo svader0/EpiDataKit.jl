@@ -1,9 +1,6 @@
-# The network boundary.
-#
-# Everything above this layer works with an `EpiResponse` and never touches HTTP.jl, which
-# is what lets the whole test suite run offline against `MockTransport`. That abstraction
-# is the reason it exists — recorded fixtures make the error-handling paths testable, and
-# those paths are exactly the ones that are hard to trigger on demand against a live API.
+# Nothing above this layer touches HTTP.jl; it sees only `EpiResponse`. That is what lets
+# the suite run offline against `MockTransport`, which is how the error paths get tested at
+# all; they are the ones hardest to trigger on demand against a live API.
 
 """
     RateLimitInfo
@@ -15,7 +12,7 @@ optional and an all-`nothing` value is normal rather than an error. Callers shou
 this as a hint that lets them be more precise, never as a guarantee.
 
 `retry_after` is populated whenever the header is present, but note that Delphi sends it
-on ordinary `200` responses too — it is only meaningful alongside a `429` or `503`.
+on ordinary `200` responses too; it is only meaningful alongside a `429` or `503`.
 """
 struct RateLimitInfo
     limit::Union{Int,Nothing}
@@ -74,7 +71,7 @@ end
     request_key(endpoint, params) -> String
 
 The canonical identity of a request: what fixtures are keyed on and what error messages
-report. Contains no credentials — the API key travels in a header, never here.
+report. Contains no credentials: the API key travels in a header, never here.
 """
 request_key(endpoint::AbstractString, params) = string(endpoint, "?", canonical_query(params))
 
@@ -103,6 +100,12 @@ be exactly as wrong the second time, so retrying it just burns quota that is cap
 
 `timeout` bounds the connect and the response phases separately, so one attempt can take
 up to roughly twice it; `max_retries` multiplies that again.
+
+`max_response_bytes` caps the decompressed response. HTTP.jl's own default is 64 MiB, below
+what ordinary epidemiological queries return: all US counties, daily, over 2020-2021 is a
+few hundred MiB of CSV. The default here is raised to suit that while staying bounded, so a
+runaway response cannot exhaust memory in a long-running process. Note that it only applies
+to responses that arrive compressed, which is what Delphi sends.
 """
 struct HTTPTransport <: AbstractTransport
     base_url::String
@@ -111,6 +114,7 @@ struct HTTPTransport <: AbstractTransport
     base_delay::Float64
     max_delay::Float64
     timeout::Int
+    max_response_bytes::Int
 end
 
 function HTTPTransport(;
@@ -120,10 +124,11 @@ function HTTPTransport(;
     base_delay::Real = 1.0,
     max_delay::Real = 30.0,
     timeout::Integer = 60,
+    max_response_bytes::Integer = 512 * 1024 * 1024,
 )
     key = api_key === nothing || isempty(api_key) ? nothing : string(api_key)
     HTTPTransport(string(base_url), key, Int(max_retries), Float64(base_delay),
-                  Float64(max_delay), Int(timeout))
+                  Float64(max_delay), Int(timeout), Int(max_response_bytes))
 end
 
 function auth_headers(t::HTTPTransport)
@@ -139,7 +144,7 @@ _headers_dict(h) = Dict{String,String}(lowercase(string(k)) => string(v) for (k,
 
 Seconds to wait before retry number `attempt`.
 
-An explicit `Retry-After` wins outright — the server knows when its own window resets and
+An explicit `Retry-After` wins outright: the server knows when its own window resets, and
 guessing shorter just earns another rejection. Otherwise back off exponentially with
 jitter in `[0.5, 1.5]×`, so that concurrent workers that were throttled together do not
 all wake at the same instant and collide again.
@@ -152,6 +157,17 @@ end
 
 is_retryable(status::Integer) = status == 429 || status >= 500
 
+# A caller only ever sees the decoded table, so without this the anonymous 60/hour limit is
+# invisible until it becomes a 429 mid-analysis.
+const LOW_QUOTA = 10
+
+function _warn_low_quota(resp::EpiResponse)
+    rem = ratelimit(resp).remaining
+    (rem === nothing || rem > LOW_QUOTA) && return nothing
+    @warn "Delphi API quota nearly exhausted" remaining = rem maxlog = 1
+    return nothing
+end
+
 function fetch_raw(t::HTTPTransport, endpoint::AbstractString, params)
     key = request_key(endpoint, params)
     url = string(rstrip(t.base_url, '/'), "/", lstrip(endpoint, '/'))
@@ -161,26 +177,40 @@ function fetch_raw(t::HTTPTransport, endpoint::AbstractString, params)
     for attempt in 1:(t.max_retries + 1)
         resp = try
             # Both phases need a bound. `read_idle_timeout` covers the response, but
-            # HTTP.jl defaults `connect_timeout` to 0, meaning no limit — a black-holed
+            # HTTP.jl defaults `connect_timeout` to 0, meaning no limit, so a black-holed
             # address then hangs on the OS TCP timeout (measured: ~31s against a
             # non-routable IP, regardless of what `timeout` was set to).
             r = HTTP.get(url; query = params, headers = headers,
                          connect_timeout = t.timeout,
                          read_idle_timeout = t.timeout,
+                         max_decompressed_size = t.max_response_bytes,
                          status_exception = false, retry = false)
             EpiResponse(r.status, Vector{UInt8}(r.body), _headers_dict(r.headers), key)
         catch e
+            e isa InterruptException && rethrow()
+            # An oversized response will be exactly as oversized next time, and each retry
+            # re-downloads it. HTTP.jl's own message names only its internal keyword, which
+            # tells a caller nothing about the query they wrote.
+            if e isa HTTP.DecompressionLimitError
+                throw(TransportError(key, 0,
+                    "response exceeded max_response_bytes = $(t.max_response_bytes). " *
+                    "Narrow the query to a shorter time range or fewer geographies, or " *
+                    "raise the cap on HTTPTransport."))
+            end
             # Connection-level failures (DNS, TLS, timeout) never reach a status code.
             # They are retryable in the same way a 5xx is; re-throw once retries run out.
-            e isa InterruptException && rethrow()
             attempt > t.max_retries && throw(TransportError(key, 0, sprint(showerror, e)))
             sleep(backoff_delay(t, attempt, nothing))
             continue
         end
 
         last_resp = resp
-        (is_retryable(resp.status) && attempt <= t.max_retries) || return resp
-        sleep(backoff_delay(t, attempt, ratelimit(resp).retry_after))
+        if is_retryable(resp.status) && attempt <= t.max_retries
+            sleep(backoff_delay(t, attempt, ratelimit(resp).retry_after))
+            continue
+        end
+        _warn_low_quota(resp)
+        return resp
     end
 
     return last_resp::EpiResponse
@@ -193,7 +223,7 @@ Serves recorded responses instead of making requests.
 
 `fixtures` maps a [`request_key`](@ref) to an [`EpiResponse`](@ref). Every request is
 appended to `calls`, so a test can assert not just what came back but what was actually
-sent — including that the API key never appears in the query string.
+sent, including that the API key never appears in the query string.
 
 An unknown key throws rather than returning empty. A test that quietly received "no data"
 because of a typo in its own fixture key would pass for the wrong reason.

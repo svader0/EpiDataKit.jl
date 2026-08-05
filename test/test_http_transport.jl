@@ -1,16 +1,15 @@
 using Base64
+using CodecZlib
 using HTTP
+using Logging
 using EpiDataKit: HTTPTransport, fetch_raw, ratelimit, body_string, TransportError
 
 # Exercises the *real* HTTP path against a throwaway server on localhost.
+# Fully offline and deterministic. Nothing here touches the network.
 #
 # Everything else in the suite goes through MockTransport, which is a different method of
-# `fetch_raw` entirely — so without this file, `fetch_raw(::HTTPTransport, ...)` has zero
-# coverage and mistakes in it are invisible. That is not hypothetical: an HTTP.jl keyword
-# deprecation sat unnoticed in that function precisely because nothing offline ever called
-# it.
-#
-# Still fully offline and deterministic. Nothing here touches the network.
+# `fetch_raw` entirely, so without this file, `fetch_raw(::HTTPTransport, ...)` has zero
+# coverage and mistakes in it are invisible.
 
 @testset "HTTPTransport against a local server" begin
     hits = Dict{String,Int}()
@@ -29,13 +28,20 @@ using EpiDataKit: HTTPTransport, fetch_raw, ratelimit, body_string, TransportErr
             auth = HTTP.header(req, "Authorization", "")
             return HTTP.Response(200, "target=$(req.target)\nauth=$auth")
         elseif path == "/flaky"
-            # Fails twice, then succeeds — should be retried through to success.
+            # Fails twice, then succeeds; should be retried through to success.
             return hits[path] < 3 ? HTTP.Response(500, "server error") :
                                     HTTP.Response(200, "recovered")
         elseif path == "/bad"
             return HTTP.Response(400, "{\"result\": -1, \"message\": \"nope\"}")
         elseif path == "/empty"
             return HTTP.Response(200, "")
+        elseif path == "/big"
+            # Gzipped, because the size cap only applies while decompressing.
+            return HTTP.Response(200, ["Content-Encoding" => "gzip"],
+                                 transcode(GzipCompressor, repeat("row\n", 20_000)))
+        elseif path == "/lowquota"
+            return HTTP.Response(200,
+                ["X-My-Limit" => "60", "X-My-Remaining" => "3"], "hello")
         end
         return HTTP.Response(404, "<html>not found</html>")
     end
@@ -66,6 +72,18 @@ using EpiDataKit: HTTPTransport, fetch_raw, ratelimit, body_string, TransportErr
             @test rl.limit == 60
             @test rl.remaining == 55
             @test rl.reset == unix2datetime(1785654587)
+        end
+
+        @testset "a nearly exhausted quota warns" begin
+            # Callers only ever see the decoded table, so without this the anonymous
+            # 60/hour limit is invisible right up until it becomes a 429 mid-analysis.
+            @test_logs (:warn, r"quota") match_mode = :any begin
+                fetch_raw(transport(), "lowquota", Dict("a" => "1"))
+            end
+            # Plenty remaining: no warning. `/ok` reports 55.
+            @test_logs min_level = Logging.Warn begin
+                fetch_raw(transport(), "ok", Dict("a" => "1"))
+            end
         end
 
         @testset "query parameters are actually sent, sorted" begin
@@ -123,7 +141,7 @@ using EpiDataKit: HTTPTransport, fetch_raw, ratelimit, body_string, TransportErr
             @test occursin("not found", body_string(resp))
         end
 
-        @testset "empty 200 body is preserved, not mangled" begin
+        @testset "empty 200 body is preserved" begin
             resp = fetch_raw(transport(), "empty", Dict())
             @test resp.status == 200
             @test isempty(body_string(resp))
@@ -136,15 +154,26 @@ using EpiDataKit: HTTPTransport, fetch_raw, ratelimit, body_string, TransportErr
             @test_throws TransportError fetch_raw(dead, "ok", Dict())
         end
 
+        @testset "an oversized response is explained, and not retried" begin
+            # HTTP.jl caps decoded bodies at 64 MiB by default, which real county-level
+            # queries exceed. Its own error names only that internal keyword. Retrying it
+            # would re-download the same oversized body three more times.
+            empty!(hits)
+            t = transport(max_response_bytes = 1024, max_retries = 3)
+            err = try; fetch_raw(t, "big", Dict("a" => "1")); catch e; e; end
+            @test err isa TransportError
+            @test occursin("max_response_bytes", err.body_excerpt)
+            @test occursin("Narrow the query", err.body_excerpt)
+            @test hits["/big"] == 1
+
+            # Comfortably under the cap: the same body comes back whole.
+            resp = fetch_raw(transport(max_response_bytes = 10^7), "big", Dict("a" => "1"))
+            @test length(body_string(resp)) == 80_000
+        end
+
         @testset "an explicit timeout still makes a working request" begin
-            # The guard the file header describes: `fetch_raw(::HTTPTransport, ...)` is
-            # only ever run here, so a keyword HTTP.jl has renamed or removed shows up in
-            # this testset and nowhere else. `connect_timeout` matters most — HTTP.jl
-            # defaults it to 0, meaning unlimited, so if it stops being threaded through
-            # then a black-holed address hangs on the OS TCP timeout no matter what
-            # `timeout` says. (Verified manually: ~31s against a non-routable IP with the
-            # keyword absent. That is not asserted here because it needs real routing,
-            # and this suite stays offline.)
+            # Catches a timeout keyword HTTP.jl has renamed or dropped. Nothing here can
+            # assert the timeout fires: that needs real routing, and this suite is offline.
             resp = fetch_raw(transport(timeout = 5), "ok", Dict("a" => "1"))
             @test resp.status == 200
             @test body_string(resp) == "hello"
