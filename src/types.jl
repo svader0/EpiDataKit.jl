@@ -3,7 +3,7 @@
 
 Geographic resolution of an observation. Values are written to disk as plain integers. 
 Never renumber an existing entry; append instead, or previously written Arrow files will
-silently decode to the wrong level.
+decode to the wrong level.
 """
 @enum GeoLevel::Int8 begin
     NATION          = 0
@@ -23,8 +23,7 @@ end
 Why a measurement is absent. Codes are Delphi's documented values, so the integers
 carry meaning beyond this package and must not be renumbered.
 
-`NOT_MISSING` is the normal case: the value is present. A row can carry a present
-`value` and still be missing `stderr`/`sample_size`; this field describes `value`.
+`NOT_MISSING` is the normal case, i.e the value is present.
 """
 @enum MissingCode::Int8 begin
     NOT_MISSING      = 0
@@ -46,9 +45,12 @@ The interval is closed, so `period_start:period_end` is inclusive. A daily obser
 `issue` refers to the date the observation was issued by the source. Surveillance numbers are often
 revised after the fact, so (period_start, issue) is the true identifier for a measurement.
 
-Note that Delphi provides a `lag` field, which we have chosen here not to store.
-By definition, `lag = issue - period_end`, so it is redundant and can be derived from the
-other fields. Storing it would be one more thing that can disagree with the fields it derives from.
+`lag` is how long after the period the value was published, counted in the signal's own
+time units: days for a daily signal, weeks for a weekly one. It is stored as the source
+reported it rather than recomputed. `issue - period_end` gives days regardless, and this
+schema does not record the time resolution, so deriving `lag` would mean inferring it from
+the interval width and then converting. Nowcast evaluation filters on lag directly, so it
+is worth a column.
 """
 struct EpiObservation
     source::Symbol
@@ -61,6 +63,7 @@ struct EpiObservation
     stderr::Union{Float64,Missing}
     sample_size::Union{Float64,Missing}
     issue::Union{Date,Missing}
+    lag::Union{Int,Missing}
     missing_code::MissingCode
 end
 
@@ -85,19 +88,18 @@ Base.hash(o::EpiObservation, h::UInt) =
 
 A column-oriented collection of [`EpiObservation`](@ref).
 
-This is a `StructArray`, so it stores one vector per field while still indexing as rows
-(`tbl[3]` is an `EpiObservation`). The columnar layout is what `Arrow.write` consumes
-directly: writing hands over the existing column vectors, where a `Vector{EpiObservation}`
-would force Arrow to transpose every row into columns first.
+As a `StructArray`, it stores one vector per field while still indexing as rows. 
+The columnar layout is what `Arrow.write` consumes directly, which makes things
+very efficient for us.
 
-Converts to a `DataFrame` in one call:
+It also converts to a `DataFrame` in one line:
 
     using DataFrames
     df = DataFrame(tbl)                   # copies the columns, as DataFrames defaults to
     df = DataFrame(tbl; copycols = false) # shares them, no allocation
 
-`copycols = false` is worth reaching for on large tables, with the usual caveat that the
-two objects then alias the same vectors and mutating one is visible in the other.
+`copycols = false` is worth reaching for on large tables, with the obvious caveat that 
+mutating one is visible in the other.
 """
 const EpiTable = StructArray{EpiObservation}
 
@@ -120,6 +122,15 @@ The Delphi Epidata `covidcast` endpoint: one measurement per row.
 """
 struct DelphiCovidcast <: AbstractSource end
 
+"""
+    DelphiFluView()
+
+The Delphi Epidata `fluview` endpoint: influenza-like illness from CDC's outpatient
+network. One row carries several measurements, so standardizing fans it out into one
+observation per measurement.
+"""
+struct DelphiFluView <: AbstractSource end
+
 # --------------------------------------------------
 #                   ERROR TYPES
 # --------------------------------------------------
@@ -127,8 +138,8 @@ struct DelphiCovidcast <: AbstractSource end
 """
     EpiDataKitError
 
-Supertype for every error this package raises on purpose. Catch this to handle any
-failure originating in EpiDataKit rather than in HTTP.jl or CSV.jl.
+For every error this package raises on purpose. Catch this to handle any
+failure originating in EpiDataKit rather than in HTTP.jl or CSV.jl or whathaveyou.
 """
 abstract type EpiDataKitError <: Exception end
 
@@ -140,12 +151,7 @@ exception. Exceptions get logged, printed, and pasted into issue trackers, so a 
 reaches one should be assumed disclosed.
 
 The transport sends the API key as an HTTP Basic header rather than a query parameter, so
-this is a second line of defence for hand-built URLs, not the primary one.
-
-The parameter list errs towards over-redaction. None of Delphi's own query parameters
-(`data_source`, `signal`, `time_type`, `geo_type`, `time_values`, `geo_value`, `format`,
-`as_of`, `issues`, `lag`) contain any of these substrings, so a false positive costs
-nothing here while a false negative discloses a credential.
+this is a second line of defense.
 """
 function scrub_secrets(s::AbstractString)
     out = replace(s,
@@ -159,7 +165,7 @@ end
 """
     ValidationError(msg)
 
-A request was rejected before it was sent, because it could not have been valid.
+A request was rejected before it was sent because it was malformed or nonsensical.
 """
 struct ValidationError <: EpiDataKitError
     msg::String
@@ -170,8 +176,7 @@ end
 
 The query was well-formed and the server understood it, but no data matched.
 
-In CSV mode this arrives as an empty `200` body with no result code at all; in JSON mode
-as `result: -2`. Both land here.
+In CSV mode this arrives as an empty `200` body with no result code at all.
 """
 struct NoResultsError <: EpiDataKitError
     request::String
@@ -181,13 +186,9 @@ end
 """
     TruncatedResultsError(request, message)
 
-The result set hit the server's row cap (`result: 2`), so what came back is a prefix of
-the real answer.
-
-This is deliberately an error and not a warning. A truncated response is
-indistinguishable from a complete one by inspection, so treating it as success means
-silently analysing partial data. Callers that can subdivide the query should catch this
-and narrow the time window.
+The result set hit the server's row cap, so what came back is a prefix of
+the real answer. An incomplete result is worse than no result, so this is an 
+error rather than a warning.
 """
 struct TruncatedResultsError <: EpiDataKitError
     request::String
@@ -198,8 +199,8 @@ end
 """
     EpidataError(request, code, message)
 
-The server reported a failure in its own error format — a malformed query, an unknown
-parameter, or any other `result: -1`.
+The server reported a failure in its own error format. Either it is a malformed query, an unknown
+parameter, or any other problem.
 """
 struct EpidataError <: EpiDataKitError
     request::String
@@ -211,14 +212,9 @@ end
 """
     StoreError(path, msg)
 
-A file on disk could not be read back as an [`EpiTable`](@ref): it is not an Arrow file,
+A file on disk could not be read back as an [`EpiTable`](@ref). Either it is not an Arrow file,
 it is an Arrow file written by something else, or it carries a schema value this version
 of the package does not know.
-
-That last case is the forward-compatibility one. [`GeoLevel`](@ref) and
-[`MissingCode`](@ref) are documented as append-only, so a file written by a newer
-EpiDataKit can hold a level this build has never heard of. Reading it is a real failure —
-guessing would misattribute the row — but it is a failure the message can explain.
 """
 struct StoreError <: EpiDataKitError
     path::String
@@ -229,7 +225,7 @@ end
     TransportError(request, status, body_excerpt)
 
 The exchange failed below the API's own error protocol: an unexpected status with a body
-that is not Epidata's error format at all, such as a 404 HTML page or a proxy error.
+that is not Epidata's error format at all.
 """
 struct TransportError <: EpiDataKitError
     request::String
@@ -238,6 +234,8 @@ struct TransportError <: EpiDataKitError
     TransportError(request, status, body_excerpt) =
         new(scrub_secrets(request), status, first(body_excerpt, 200))
 end
+
+# Error type show-ers:
 
 Base.showerror(io::IO, e::ValidationError) = print(io, "ValidationError: ", e.msg)
 

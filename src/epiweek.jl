@@ -1,15 +1,5 @@
-# MMWR ("epi") weeks — the calendar US public health surveillance is reported on.
-#
-# Definition: weeks run Sunday through Saturday. Week 1 of a given MMWR year is the first
-# such week with at least four days in that calendar year, which is equivalently the week
-# whose *Wednesday* falls in that year. A year therefore has 52 or 53 weeks, and the first
-# few days of January frequently belong to the previous MMWR year.
-#
-# The tempting shortcut is "MMWR week == ISO week of `d + 1 day`". It is wrong. ISO weeks
-# pivot on Thursday; shifting by a day moves that pivot to Wednesday, which looks right,
-# but the two disagree about which *year* owns the week whenever Dec 31 is a Wednesday.
-# For 2025-12-31 the shortcut yields (2026, 1) where the answer is (2025, 53). Computing
-# it directly is barely more code and is not subtly wrong.
+# Utilities to deal with MMWR ("epi") weeks and to convert between 
+# Delphi's time data and the closed intervals they denote.
 
 """
     week_start(d::Date) -> Date
@@ -22,9 +12,6 @@ week_start(d::Date) = d - Day(mod(dayofweek(d), 7))  # dayofweek: Mon=1 … Sun=
     year_start(y::Integer) -> Date
 
 The Sunday that opens MMWR year `y`, i.e. the start of its week 1.
-
-This can fall in the previous calendar year — MMWR 2021 opens on 2021-01-03, but MMWR
-2020 opens on 2019-12-29.
 """
 function year_start(y::Integer)
     s = week_start(Date(y, 1, 1))
@@ -38,8 +25,8 @@ end
 
 The MMWR year and week number containing `d`.
 
-The year returned is the *MMWR* year, which near a year boundary need not match
-`Dates.year(d)`:
+The year returned is the *MMWR* year, and can differ from the
+calendar year.
 
 ```jldoctest
 julia> using EpiDataKit: epiweek
@@ -54,8 +41,6 @@ julia> epiweek(Date(2025, 12, 31))
 function epiweek(d::Date)
     y = year(d)
     s = week_start(d)
-    # `d`'s calendar year is the right starting guess, but the week can spill either way
-    # across the boundary. At most one nudge is ever needed.
     s < year_start(y) && (y -= 1)
     s >= year_start(y + 1) && (y += 1)
     return (y, Int(div(Dates.value(s - year_start(y)), 7)) + 1)
@@ -88,11 +73,7 @@ weeks_in_epiyear(y::Integer) = Int(div(Dates.value(year_start(y + 1) - year_star
 Split Delphi's packed `YYYYWW` epiweek encoding, accepting either an integer or its
 string form.
 
-Both halves of the encoding are checked. The width must be exactly six digits, because
-the failure that actually happens is a truncated or over-long field, not a fanciful week
-54 — and `divrem(n, 100)` is happy to read `"2026"` as year 20 week 26 and hand back real
-dates in the year 20 AD. The week number must then exist in that year, since a decode
-that lands on week 53 of a 52-week year is wrong by a whole year.
+Both halves of the encoding are checked. The width must be exactly six digits.
 """
 function parse_epiweek(x)
     s = strip(string(x))
@@ -125,9 +106,7 @@ end
 
 Convert one of Delphi's packed time values into the closed interval it denotes.
 
-`"day"` values become a single-day interval; `"week"` values span the MMWR week. This is
-the one place the two time encodings are reconciled, so everything downstream sees
-intervals and never has to branch on resolution.
+`"day"` values become a single-day interval; `"week"` values span the MMWR week.
 """
 function period_bounds(time_type::AbstractString, time_value)
     tt = lowercase(strip(time_type))
@@ -148,9 +127,7 @@ end
 Convert an `issue` field to the date the value was published.
 
 `issue` follows the same encoding as the signal's own time axis, so a weekly signal
-issues on epiweeks, not calendar dates. Weekly issues resolve to the *end* of the issuing
-week: publication cannot precede the period it reports, so the closing Saturday is the
-tightest defensible bound.
+issues on epiweeks, not calendar dates.
 """
 function parse_issue(time_type::AbstractString, issue)
     (issue === missing || issue === nothing) && return missing

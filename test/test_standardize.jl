@@ -108,11 +108,6 @@ using EpiDataKit: decode_response, mock_response, standardize, coerce_float,
     end
 
     @testset "row-oriented payloads may omit any key on any row" begin
-        # Regression, both directions. The available-column set used to be read off the
-        # first row and applied to the whole payload, which is only sound for a source
-        # that declares a schema. JSON declares nothing: a key absent from row 1 was
-        # silently dropped from every row, and a key absent from a later row raised the
-        # KeyError the tolerant accessor exists to prevent.
         json(s) = decode_response(src, mock_response(s))
         row(extra) = """{"geo_value":"ca","signal":"s","source":"n","geo_type":"state","time_type":"week","time_value":202620$extra}"""
 
@@ -179,8 +174,6 @@ end
         @test coerce_float(missing) === missing
         @test coerce_float(nothing) === missing
         @test coerce_float("garbage") === missing
-        # NaN is Delphi's placeholder alongside a non-zero missing code; keeping it as a
-        # float would let it propagate silently through arithmetic.
         @test coerce_float(NaN) === missing
         @test coerce_float("NaN") === missing
     end
@@ -191,16 +184,35 @@ end
         @test coerce_missing_code(missing) == NOT_MISSING
         @test coerce_missing_code(nothing) == NOT_MISSING
         @test coerce_missing_code("") == NOT_MISSING
-        # An unrecognised code should not break otherwise-fine rows.
+        # An unrecognized code should not break otherwise-fine rows.
         @test coerce_missing_code(99) == OTHER
         @test coerce_missing_code(-4) == OTHER
         @test coerce_missing_code("garbage") == OTHER
     end
 end
 
+@testset "lag is kept in the source's own units" begin
+    # `issue - period_end` is in days whatever the resolution, and the schema does not
+    # record the resolution, so a derived lag would be 7x off for weekly signals with no
+    # way to notice. The fixture reports lag=10 for a weekly row spanning 70 days.
+    src = DelphiCovidcast()
+    tbl = standardize(src, decode_response(src, mock_response(fixture("covidcast_success.csv"))))
+    @test tbl.lag == [10, 9]
+    @test Dates.value(tbl.issue[1] - tbl.period_end[1]) == 10 * 7
+
+    fv = DelphiFluView()
+    flu = standardize(fv, decode_response(fv, mock_response(fixture("fluview_success.json"))))
+    @test all(==(72), flu.lag[flu.period_start .== Date(2020, 5, 10)])
+
+    # Absent rather than zero when the row carries no lag.
+    header = split(fixture("covidcast_success.csv"), '\n')[1]
+    body = header * "\nca,x,s,state,week,202620,,202630,,0,0,0,1.0,,\n"
+    @test standardize(src, decode_response(src, mock_response(body))).lag[1] === missing
+end
+
 @testset "EpiObservation equality" begin
     mk(v) = EpiObservation(:s, :x, STATE, "ca", Date(2026, 5, 17), Date(2026, 5, 23),
-                           v, missing, missing, Date(2026, 8, 1), NOT_MISSING)
+                           v, missing, missing, Date(2026, 8, 1), 10, NOT_MISSING)
 
     # `==` on a struct holding `missing` would otherwise propagate `missing` instead of
     # answering, which would make observations impossible to compare or deduplicate.

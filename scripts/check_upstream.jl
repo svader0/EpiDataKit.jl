@@ -16,18 +16,19 @@
 #
 # The success fixture's *numbers* change legitimately and often: surveillance values get
 # revised for weeks after first publication, so a byte-for-byte diff would report drift
-# constantly and train you to ignore it. What must stay stable is the response *shape* —
-# the header line, the status codes, and how each failure mode is signalled. Those are
+# constantly and train you to ignore it. What must stay stable is the response *shape*:
+# the header line, the status codes, and how each failure mode is signaled. Those are
 # what the parser depends on, and those are what this checks.
 #
 # It also exercises `fetch_raw(::HTTPTransport, ...)` end to end, which the offline suite
-# never touches — every offline test goes through MockTransport, a different method
+# never touches; every offline test goes through MockTransport, a different method
 # entirely.
 
 using Dates
 using EpiDataKit
 using EpiDataKit: HTTPTransport, fetch_raw, decode_response, standardize, body_string,
-                  ratelimit, DelphiCovidcast, COVIDCAST_CSV_HEADER, COVIDCAST_ENDPOINT
+                  ratelimit, DelphiCovidcast, COVIDCAST_CSV_HEADER, COVIDCAST_ENDPOINT,
+                  DelphiFluView, FLUVIEW_ENDPOINT, FLUVIEW_MEASURES
 
 using JSON3
 
@@ -39,6 +40,7 @@ const WRITE = "--write" in ARGS
 const CHECKS = [
     (
         name = "CSV success",
+        endpoint = COVIDCAST_ENDPOINT,
         fixture = "covidcast_success.csv",
         params = Dict("data_source" => "nssp", "signal" => "pct_ed_visits_covid",
                       "time_type" => "week", "geo_type" => "state",
@@ -65,6 +67,7 @@ const CHECKS = [
     ),
     (
         name = "no results (CSV mode)",
+        endpoint = COVIDCAST_ENDPOINT,
         fixture = "covidcast_noresults.csv",
         params = Dict("data_source" => "nssp", "signal" => "pct_ed_visits_covid",
                       "time_type" => "week", "geo_type" => "state",
@@ -82,6 +85,7 @@ const CHECKS = [
     ),
     (
         name = "validation error (JSON at 4xx)",
+        endpoint = COVIDCAST_ENDPOINT,
         fixture = "covidcast_validation_error.json",
         params = Dict("data_source" => "nssp", "format" => "csv"),
         check = function (resp)
@@ -104,10 +108,65 @@ const CHECKS = [
     ),
     (
         name = "no results (JSON mode)",
+        endpoint = COVIDCAST_ENDPOINT,
         fixture = "covidcast_noresults.json",
         params = Dict("data_source" => "nssp", "signal" => "pct_ed_visits_covid",
                       "time_type" => "week", "geo_type" => "state",
                       "time_values" => "199001", "geo_value" => "ca"),
+        check = function (resp)
+            problems = String[]
+            resp.status == 200 || push!(problems, "expected status 200, got $(resp.status)")
+            obj = try
+                JSON3.read(body_string(resp))
+            catch
+                push!(problems, "expected a JSON body; got non-JSON")
+                return problems
+            end
+            if !haskey(obj, :result) || obj.result != -2
+                push!(problems, "expected result = -2, got $(get(obj, :result, "absent"))")
+            end
+            return problems
+        end,
+    ),
+    (
+        name = "fluview success",
+        endpoint = FLUVIEW_ENDPOINT,
+        fixture = "fluview_success.json",
+        params = Dict("epiweeks" => "202020-202021", "regions" => "nat,hhs1"),
+        check = function (resp)
+            problems = String[]
+            resp.status == 200 || push!(problems, "expected status 200, got $(resp.status)")
+            obj = try
+                JSON3.read(body_string(resp))
+            catch
+                push!(problems, "expected a JSON body; got non-JSON")
+                return problems
+            end
+            if !haskey(obj, :result) || obj.result != 1
+                push!(problems, "expected result = 1, got $(get(obj, :result, "absent"))")
+                return problems
+            end
+            rows = get(obj, :epidata, nothing)
+            if rows === nothing || isempty(rows)
+                push!(problems, "expected data rows, got none")
+                return problems
+            end
+            # standardize reads these by name and fans out over the measures, so a rename
+            # upstream is silent data loss rather than an error.
+            for f in (:region, :epiweek, :issue)
+                haskey(rows[1], f) || push!(problems, "row is missing the `$f` field")
+            end
+            present = [m for m in FLUVIEW_MEASURES if haskey(rows[1], m)]
+            isempty(present) &&
+                push!(problems, "no known measure fields present; FLUVIEW_MEASURES is stale")
+            return problems
+        end,
+    ),
+    (
+        name = "fluview no results",
+        endpoint = FLUVIEW_ENDPOINT,
+        fixture = "fluview_noresults.json",
+        params = Dict("epiweeks" => "199001", "regions" => "nat"),
         check = function (resp)
             problems = String[]
             resp.status == 200 || push!(problems, "expected status 200, got $(resp.status)")
@@ -128,7 +187,7 @@ const CHECKS = [
 function main()
     transport = HTTPTransport()
     if transport.api_key === nothing
-        @info "No DELPHI_EPIDATA_KEY set — using the anonymous 60 requests/hour limit."
+        @info "No DELPHI_EPIDATA_KEY set; using the anonymous 60 requests/hour limit."
     end
 
     failed = 0
@@ -139,7 +198,7 @@ function main()
     for c in CHECKS
         print("  ", rpad(c.name, 34))
         resp = try
-            fetch_raw(transport, COVIDCAST_ENDPOINT, c.params)
+            fetch_raw(transport, c.endpoint, c.params)
         catch e
             println("ERROR")
             println("      request failed: ", sprint(showerror, e))
@@ -160,13 +219,13 @@ function main()
         end
 
         # Rewriting on DRIFT is the point of --write: upstream moved, re-record it. What
-        # must not be recorded is a response that is not upstream speaking at all — a 429
+        # must not be recorded is a response that is not upstream speaking at all: a 429
         # from the rate limit or a 5xx from a load balancer would otherwise overwrite a
         # good fixture with an error page, and the next test run would pin *that*.
         if WRITE
             if resp.status == 429 || resp.status >= 500
                 println("      NOT rewriting ", c.fixture,
-                        " — status $(resp.status) is a server-side failure, not a recording")
+                        ": status $(resp.status) is a server-side failure, not a recording")
             else
                 path = joinpath(FIXTURES, c.fixture)
                 write(path, resp.body)
@@ -176,11 +235,11 @@ function main()
     end
 
     # End-to-end through the public entry point. This is the only exercise the real
-    # HTTPTransport fetch path gets anywhere in the repo — the offline suite substitutes
+    # HTTPTransport fetch path gets anywhere in the repo; the offline suite substitutes
     # MockTransport, which is a separate method.
-    print("  ", rpad("fetch_signal end to end", 34))
+    print("  ", rpad("fetch_covidcast end to end", 34))
     try
-        tbl = fetch_signal(
+        tbl = fetch_covidcast(
             data_source = "nssp", signal = "pct_ed_visits_covid",
             time_type = "week", geo_type = "state",
             time_values = "202620-202629", geo_value = "ca",
@@ -198,6 +257,23 @@ function main()
             else
                 println("ok (", length(tbl), " rows)")
             end
+        end
+    catch e
+        println("ERROR")
+        println("      ", sprint(showerror, e))
+        failed += 1
+    end
+
+    print("  ", rpad("fetch_fluview end to end", 34))
+    try
+        tbl = fetch_fluview(epiweeks = "202020-202021", regions = ["nat", "hhs1"])
+        if length(tbl) == 0
+            println("DRIFT")
+            println("      returned zero rows for a window that previously had data")
+            failed += 1
+        else
+            println("ok (", length(tbl), " rows, ",
+                    length(unique(tbl.signal)), " signals)")
         end
     catch e
         println("ERROR")

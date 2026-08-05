@@ -5,7 +5,7 @@ using Tables
 
 # Every case below is a body recorded from the live API, except the truncated one, which
 # could not be triggered on demand. The point of this file is that the error contract is
-# pinned to observed behaviour rather than to what the documentation implies.
+# pinned to observed behavior rather than to what the documentation implies.
 @testset "decode_response" begin
     src = DelphiCovidcast()
 
@@ -26,7 +26,7 @@ using Tables
     end
 
     @testset "empty body at 200 is how CSV mode says no results" begin
-        # There is no result code in this response at all — the emptiness is the signal.
+        # There is no result code in this response at all; the emptiness is the signal.
         body = fixture("covidcast_noresults.csv")
         @test isempty(strip(body))
         @test_throws NoResultsError decode_response(src, mock_response(body))
@@ -50,7 +50,7 @@ using Tables
         @test occursin("missing parameter", err.message)
     end
 
-    @testset "truncated result set is an error, not a silent partial answer" begin
+    @testset "truncated result set raises" begin
         resp = mock_response(fixture("covidcast_truncated.json"))
         err = try
             decode_response(src, resp)
@@ -83,10 +83,10 @@ using Tables
         @test_throws EpidataError decode_response(src, mock_response("some,other,csv\n1,2,3"))
     end
 
-    @testset "a header with no data rows is an empty table, not NoResultsError" begin
+    @testset "a header with no data rows gives an empty table" begin
         # Delphi signals "no rows matched" with a genuinely empty body, which is the case
         # above. A well-formed header carrying zero rows is a different thing and is not
-        # something the endpoint has been observed to send — so it decodes to an empty
+        # something the endpoint has been observed to send, so it decodes to an empty
         # table rather than being mapped onto the no-results contract. Pinned here so the
         # distinction is a decision rather than an accident, and so that inventing
         # handling for it later is a visible change.

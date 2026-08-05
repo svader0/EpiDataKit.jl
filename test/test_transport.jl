@@ -69,7 +69,7 @@ using EpiDataKit: canonical_query, request_key, auth_headers, backoff_delay, fet
         @test !occursin(base64encode("epidata:s3cret"), scrubbed)
         @test occursin("[REDACTED]", scrub_secrets("Authorization: Bearer abc.def.ghi"))
 
-        # Delphi's real parameters must survive untouched — over-redaction here would
+        # Delphi's real parameters must survive untouched; over-redaction here would
         # make every error message useless for debugging.
         intact = "covidcast/?data_source=nssp&format=csv&geo_type=state&geo_value=ca" *
                  "&signal=pct_ed_visits_covid&time_type=week&time_values=202620-202629"

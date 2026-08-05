@@ -61,8 +61,8 @@ using EpiDataKit: epiweek, epiweek_start, epiweek_end, year_start, week_start,
 
     @testset "parse_epiweek rejects wrong-width input" begin
         # Regression: the encoding is fixed-width, and `divrem(n, 100)` will happily read
-        # a truncated field as a plausible (year, week). "2026" became (20, 26) — year 20
-        # AD, week 26 — and produced real Dates that nothing downstream could question.
+        # a truncated field as a plausible (year, week). "2026" became (20, 26): year 20 AD,
+        # week 26, and produced real Dates that nothing downstream could question.
         # A miscounted digit is the failure that actually happens; week 54 is not.
         @test_throws ValidationError parse_epiweek("2026")
         @test_throws ValidationError parse_epiweek("26")
