@@ -1,8 +1,9 @@
 # Fixtures
 
-Recorded from the live Delphi Epidata API on 2026-08-02. Base URL for every query:
+Recorded from the live Delphi Epidata API — covidcast on 2026-08-02, fluview on 2026-08-04.
+Base URL: `https://api.delphi.cmu.edu/epidata/`
 
-    https://api.delphi.cmu.edu/epidata/covidcast/
+## covidcast — endpoint `covidcast/`
 
 | File | Status | Query |
 |---|---|---|
@@ -13,16 +14,36 @@ Recorded from the live Delphi Epidata API on 2026-08-02. Base URL for every quer
 | `covidcast_truncated.json` | 200 | **synthetic.** `result: 2` was not reproducible on demand; the shape follows the documented code |
 
 `covidcast_noresults.csv` is intentionally a zero-byte file. Do not "fix" it by adding a header
-row — the empty body *is* the behaviour under test.
+row — the empty body *is* the behavior under test.
+
+## fluview — endpoint `fluview/`
+
+| File | Status | Query |
+|---|---|---|
+| `fluview_success.json` | 200 | `epiweeks=202020-202021&regions=nat,hhs1` — 4 rows, `result: 1` |
+| `fluview_noresults.json` | 200 | `epiweeks=199001&regions=nat` — `result: -2` |
+
+fluview is JSON-only; no `format` parameter is sent. `decode_response` returns `epidata`
+on `result: 1` before reaching the CSV header check, so both endpoints share it.
+
+`num_age_2` is `null` in every row of `fluview_success.json`. That is real upstream data,
+not a recording fault, and it is what pins the rule that a null measure produces no
+observation rather than a missing-valued one.
 
 To re-record, run the maintenance script rather than issuing these by hand — it holds the
 same queries and rewrites every file here:
 
-    julia --project=. scripts/check_upstream.jl --write
+    make record-fixtures
+    # or: julia --project=. scripts/check_upstream.jl --write
 
-Without `--write` it only reports whether the upstream contract still holds. It checks the
-response *shape* (header line, status codes, result codes), not the values, because
-surveillance numbers are revised for weeks after publication and a byte-exact comparison
-would report drift constantly.
+Without `--write` (`make check-upstream`) it only reports whether the upstream contract
+still holds. It checks the response *shape* (header line, status codes, result codes), not
+the values, because surveillance numbers are revised for weeks after publication and a
+byte-exact comparison would report drift constantly.
 
-Mind the anonymous rate limit of 60 requests/hour; each run costs 5 requests.
+A response that is not upstream speaking — a 429 from the rate limit, or a 5xx from a load
+balancer — is never recorded, so a bad moment cannot overwrite a good fixture with an
+error page.
+
+Mind the anonymous rate limit of 60 requests/hour; each run costs 8 requests — 6 contract
+checks plus one end-to-end fetch per endpoint.
