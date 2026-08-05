@@ -1,0 +1,142 @@
+name: Refresh fixtures
+
+# Re-records test/fixtures/ when Delphi's response *contract* changes, and opens a PR.
+#
+# Deliberately does not re-record on a schedule and diff the bytes: surveillance values are
+# revised for weeks after publication, so that would open a PR every single week for churn
+# nobody needs to review. check_upstream.jl reports drift in the response shape — header
+# line, status codes, result codes — and only that opens a PR.
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'   # Mondays, off the hour to dodge scheduler congestion
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Re-record even when no drift is detected (refreshes sample values)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: refresh-fixtures
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: julia-actions/setup-julia@v3
+        with:
+          # The floor declared in Project.toml, so this also smoke-tests that compat bound.
+          version: '1.10'
+      - uses: julia-actions/cache@v2
+      - uses: julia-actions/julia-buildpkg@v1
+
+      - name: Check upstream contracts
+        id: check
+        env:
+          # Unset resolves to "", which HTTPTransport treats as no key and falls back to
+          # the anonymous 60 requests/hour limit. One run costs 8.
+          DELPHI_EPIDATA_KEY: ${{ secrets.DELPHI_EPIDATA_KEY }}
+        run: |
+          set +e
+          julia --project=. scripts/check_upstream.jl 2>&1 | tee check.log
+          echo "status=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Re-record fixtures
+        if: steps.check.outputs.status != '0' || github.event.inputs.force == 'true'
+        env:
+          DELPHI_EPIDATA_KEY: ${{ secrets.DELPHI_EPIDATA_KEY }}
+        run: |
+          set +e
+          julia --project=. scripts/check_upstream.jl --write 2>&1 | tee write.log
+          exit 0
+
+      - name: Run the offline suite against the new fixtures
+        id: tests
+        if: steps.check.outputs.status != '0' || github.event.inputs.force == 'true'
+        run: |
+          set +e
+          julia --project=. -e 'using Pkg; Pkg.test()' 2>&1 | tail -40 | tee test.log
+          echo "status=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Open or update the PR
+        if: steps.check.outputs.status != '0' || github.event.inputs.force == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet -- test/fixtures/; then
+            {
+              echo "### No fixture changes"
+              echo
+              echo "Drift was reported, but re-recording produced identical files."
+              echo "Usually means the API was unreachable — check_upstream refuses to record"
+              echo "a 429 or 5xx over a good fixture."
+              echo
+              echo '```'; cat check.log; echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          BRANCH=chore/refresh-fixtures
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          git add test/fixtures/
+          git commit -m "Re-record test fixtures from the live Delphi API"
+          git push --force origin "$BRANCH"
+
+          if [ "${{ steps.tests.outputs.status }}" = "0" ]; then
+            VERDICT="The offline suite passes against the new fixtures."
+          else
+            VERDICT="**The offline suite FAILS against the new fixtures.** The recorded
+          responses changed in a way the decoder does not handle — this is the case worth
+          looking at closely."
+          fi
+
+          {
+            echo "Recorded by \`.github/workflows/RefreshFixtures.yml\`."
+            echo
+            echo "$VERDICT"
+            echo
+            echo "## What drifted"
+            echo
+            echo '```'; cat check.log; echo '```'
+            echo
+            echo "## Before merging"
+            echo
+            echo "Drift means the response *shape* changed, so the fixtures may not be the"
+            echo "only thing that needs updating:"
+            echo
+            echo "- [ ] If the CSV header moved, update \`COVIDCAST_CSV_HEADER\` in \`src/sources/delphi.jl\`"
+            echo "- [ ] If a status or result code changed, update \`decode_response\` and its tests"
+            echo "- [ ] If a fluview field was renamed, update \`FLUVIEW_MEASURES\` in \`src/standardize.jl\`"
+            echo "- [ ] Check the diff is a contract change, not just revised measurement values"
+            echo
+            echo "<details><summary>Test output</summary>"
+            echo
+            echo '```'; cat test.log 2>/dev/null || echo "(not run)"; echo '```'
+            echo
+            echo "</details>"
+          } > body.md
+
+          cat body.md >> "$GITHUB_STEP_SUMMARY"
+
+          EXISTING=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh pr edit "$EXISTING" --body-file body.md
+            echo "Updated PR #$EXISTING"
+          else
+            gh pr create \
+              --head "$BRANCH" \
+              --base "${{ github.event.repository.default_branch }}" \
+              --title "Re-record test fixtures (upstream contract drifted)" \
+              --body-file body.md
+          fi

@@ -30,6 +30,16 @@ jobs:
           - ubuntu-latest
         arch:
           - x64
+        # `scan` memory-maps the file, and its docstring makes a claim about POSIX unlink
+        # semantics that only another platform can check. One job each is enough; the
+        # version matrix above does not need repeating.
+        include:
+          - version: '1.10'
+            os: windows-latest
+            arch: x64
+          - version: '1.10'
+            os: macos-latest
+            arch: aarch64
     steps:
       - uses: actions/checkout@v6
       - uses: julia-actions/setup-julia@v3
