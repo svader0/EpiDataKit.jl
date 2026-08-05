@@ -36,7 +36,7 @@ jobs:
         with:
           # The floor declared in Project.toml, so this also smoke-tests that compat bound.
           version: '1.10'
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
       - uses: julia-actions/julia-buildpkg@v1
 
       - name: Check upstream contracts
