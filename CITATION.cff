@@ -14,8 +14,10 @@ authors:
     orcid: "https://orcid.org/0009-0000-7819-1044"
 
 version: 0.1.0
-date-released: "2026-08-04"
+date-released: "2026-08-08"
 license: MIT
+# Concept DOI: always resolves to the newest release, so it never needs updating.
+doi: "10.5281/zenodo.21848579"
 repository-code: "https://github.com/svader0/EpiDataKit.jl"
 url: "https://github.com/svader0/EpiDataKit.jl"
 

@@ -224,12 +224,15 @@ software as follows:
   author  = {Vader, Sam},
   year    = {2026},
   version = {0.1.0},
+  doi     = {10.5281/zenodo.21848579},
   url     = {https://github.com/svader0/EpiDataKit.jl}
 }
 ```
 
-Cite the version you actually used. GitHub's "Cite this repository" button generates this
-from [`CITATION.cff`](CITATION.cff) in other formats too.
+That DOI resolves to whichever release is newest. To pin a specific one, take the version
+DOI from its [Zenodo record](https://doi.org/10.5281/zenodo.21848579) instead — v0.1.0 is
+`10.5281/zenodo.21848580`. GitHub's "Cite this repository" button generates this from
+[`CITATION.cff`](CITATION.cff) in other formats too.
 
 
 ## Dev
