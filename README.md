@@ -1,6 +1,7 @@
 # EpiDataKit
 
 [![Build Status](https://github.com/svader0/EpiDataKit.jl/actions/workflows/CI.yml/badge.svg?branch=master)](https://github.com/svader0/EpiDataKit.jl/actions/workflows/CI.yml?query=branch%3Amaster)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21848579.svg)](https://doi.org/10.5281/zenodo.21848579)
 
 EpiDataKit is a Julia package that streamlines the collection, standardization, and use of data from the Delphi Epidata API. It provides a simple interface to the API, including functions for downloading data, parsing results, and converting them into a tidy table. The Epidata API provides access to epidemiological surveillance data for influenza, COVID-19, and other diseases, drawn from government sources such as the CDC, private partners, public datasets, etc. It is maintained by Carnegie Mellon University's Delphi Research Group. 
 
@@ -128,7 +129,7 @@ Delphi allows 60 requests/hour anonymously and lifts the cap entirely with a
 `DELPHI_EPIDATA_KEY` and it is picked up automatically — and sent as an HTTP Basic header,
 never as a query parameter, so it cannot leak through logs or an exception message.
 
-It is highly recommend requesting an API key from Delphi, as you are optionally able to provide data that helps them with future research and funding. 
+It is highly recommended to request an API key from Delphi, as you are optionally able to provide data that helps them with future research and funding. 
 
 ## The schema
 
