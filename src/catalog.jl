@@ -230,12 +230,18 @@ Throws [`NoResultsError`](@ref) when no dataset matches at all. The result is a
 function catalog(; source = nothing, signal = nothing, time_type = nothing,
                    geo_type = nothing, transport::AbstractTransport = HTTPTransport())
     params = catalog_params(; source, signal, time_type, geo_type)
+    fluview_only = _is_fluview_only(source)
 
-    covidcast = _is_fluview_only(source) ? empty_catalog() :
-                _covidcast_catalog(transport, params)
+    # covidcast_meta has no fluview data_source, so this path never reaches the wire, and an
+    # empty result here must not be blamed on a covidcast_meta query that was never sent.
+    covidcast = fluview_only ? empty_catalog() : _covidcast_catalog(transport, params)
 
     all_entries = vcat(covidcast, fluview_catalog_entries())
     keep = findall(e -> _matches(e, source, signal, time_type, geo_type), all_entries)
-    isempty(keep) && throw(NoResultsError(request_key(COVIDCAST_META_ENDPOINT, params)))
+    if isempty(keep)
+        throw(NoResultsError(fluview_only ?
+            "catalog(source = \"fluview\"): no fluview signal matches the other filters" :
+            request_key(COVIDCAST_META_ENDPOINT, params)))
+    end
     return all_entries[keep]
 end

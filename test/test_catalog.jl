@@ -275,6 +275,22 @@ end
         @test all(==(:fluview), cat.source)
     end
 
+    @testset "a fluview-only query that matches nothing names no request" begin
+        # fluview has no county data. Nothing was sent, so the error must not quote a
+        # covidcast_meta query as the thing that came back empty.
+        t = MockTransport()
+        err = try
+            catalog(; transport = t, source = "fluview", geo_type = "county")
+            nothing
+        catch e
+            e
+        end
+
+        @test err isa NoResultsError
+        @test isempty(t.calls)
+        @test !occursin("covidcast_meta", err.request)
+    end
+
     @testset "an empty covidcast half does not hide the fluview half" begin
         # census_division exists in fluview and not in covidcast_meta, so upstream answers
         # with an empty body. Whether the query found nothing is decided after both halves.
