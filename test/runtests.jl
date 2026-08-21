@@ -14,4 +14,5 @@ fixture(name) = read(joinpath(FIXTURES, name), String)
     include("test_fetch_covidcast.jl")
     include("test_fetch_fluview.jl")
     include("test_store.jl")
+    include("test_catalog.jl")
 end
