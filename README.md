@@ -129,8 +129,8 @@ by hand:
 ```julia
 e = covid[1]
 tbl = fetch_covidcast(data_source = String(e.source), signal = String(e.signal),
-                       time_type = String(e.time_type), geo_type = "county",
-                       time_values = e.last_period)
+                      time_type = String(e.time_type), geo_type = "county",
+                      time_values = e.last_period)
 
 tbl[1]
 # EpiObservation(:nssp, :pct_ed_visits_covid, COUNTY, "08001",

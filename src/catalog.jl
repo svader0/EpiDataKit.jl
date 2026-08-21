@@ -39,10 +39,6 @@ nothing.
 """
 empty_catalog() = CatalogTable(CatalogEntry[])
 
-# ---------------------------------------------------------------------------
-# Query construction
-# ---------------------------------------------------------------------------
-
 """
     catalog_params(; source = nothing, signal = nothing, time_type = nothing,
                      geo_type = nothing) -> Dict{String,String}
@@ -77,10 +73,6 @@ function catalog_params(; source = nothing, signal = nothing,
     geo_type === nothing || parse_geo_level(geo_type)  # throws on an unknown geo_type
     return params
 end
-
-# ---------------------------------------------------------------------------
-# Row conversion
-# ---------------------------------------------------------------------------
 
 """
     catalog_entries(raw) -> CatalogTable
@@ -160,10 +152,6 @@ fluview_catalog_entries() = CatalogTable([
     for m in FLUVIEW_MEASURES for lvl in FLUVIEW_GEO_LEVELS
 ])
 
-# ---------------------------------------------------------------------------
-# The entry point
-# ---------------------------------------------------------------------------
-
 _is_fluview_only(source) =
     source !== nothing && lowercase(strip(string(source))) == "fluview"
 
@@ -184,8 +172,7 @@ function _covidcast_catalog(transport::AbstractTransport, params)
         return catalog_entries(decode_response(src,
             fetch_raw(transport, endpoint(src), params)))
     catch e
-        # This filter matched no covidcast signal. The fluview half may still have rows, so
-        # whether the whole query found nothing is the caller's call, not this one's.
+        # The fluview half may still match, so the caller decides whether nothing matched.
         e isa NoResultsError && return empty_catalog()
         rethrow()
     end
@@ -225,15 +212,12 @@ Throws [`NoResultsError`](@ref) when no dataset matches at all. The result is a
 """
 function catalog(; source = nothing, signal = nothing, time_type = nothing,
                    geo_type = nothing, transport::AbstractTransport = HTTPTransport())
-    # catalog_params already turns a bare source into signals=source:*, so a literal "*"
-    # here has to collapse to the same "no filter" rather than reach _matches, which would
-    # compare :* against every real signal name and match none.
+    # "*" is the wire form catalog_params emits for a nil signal, not a signal name.
     signal = (signal === nothing || string(signal) == "*") ? nothing : signal
     params = catalog_params(; source, signal, time_type, geo_type)
     fluview_only = _is_fluview_only(source)
 
-    # covidcast_meta has no fluview data_source, so this path never reaches the wire, and an
-    # empty result here must not be blamed on a covidcast_meta query that was never sent.
+    # covidcast_meta has no fluview data_source, so this path never reaches the wire.
     covidcast = fluview_only ? empty_catalog() : _covidcast_catalog(transport, params)
 
     all_entries = vcat(covidcast, fluview_catalog_entries())

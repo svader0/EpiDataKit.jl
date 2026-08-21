@@ -95,9 +95,7 @@ using Tables
     end
 
     @testset "a county geo_value survives CSV parsing as a string" begin
-        # `types` pins geo_value to String, and `validate = false` lets endpoints with no
-        # geo_value column share this decoder. A typo in that dict would now go unreported,
-        # so the typing it provides is pinned here instead.
+        # `validate = false` means a typo in the `types` dict would go unreported.
         body = COVIDCAST_CSV_HEADER * "\n" *
             "06075,pct_ed_visits_covid,nssp,county,week,202620,,202633,1,0,0,0,0.07,,\n"
         raw = decode_response(DelphiCovidcast(), mock_response(body))
