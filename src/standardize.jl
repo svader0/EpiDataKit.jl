@@ -40,12 +40,14 @@ end
 coerce_missing_code(::Any) = OTHER
 
 """
-    coerce_lag(x) -> Union{Int,Missing}
+    coerce_int(x) -> Union{Int,Missing}
 
-Read a reported lag. Whole periods by definition, so the float path is a rounding, not a
+Read a whole-number field that may arrive as a number, as a string, or not at all.
+
+A reported lag is whole periods by definition, so the float path is a rounding rather than a
 truncation of anything meaningful.
 """
-coerce_lag(x) = (v = coerce_float(x); v === missing ? missing : round(Int, v))
+coerce_int(x) = (v = coerce_float(x); v === missing ? missing : round(Int, v))
 
 # Column access tolerating an absent field, since these APIs omit keys rather than sending
 # nulls. A source declaring a `Tables.schema` guarantees every row has every column, so the
@@ -115,7 +117,7 @@ function standardize(::DelphiCovidcast, raw)
         push!(c.stderr, coerce_float(_get(row, :stderr, avail)))
         push!(c.sample_size, coerce_float(_get(row, :sample_size, avail)))
         push!(c.issue, parse_issue(tt, _get(row, :issue, avail)))
-        push!(c.lag, coerce_lag(_get(row, :lag, avail)))
+        push!(c.lag, coerce_int(_get(row, :lag, avail)))
         push!(c.missing_code, coerce_missing_code(_get(row, :missing_value, avail)))
     end
 
@@ -140,7 +142,7 @@ function standardize(::DelphiFluView, raw)
         lvl, gid = fluview_geo(_get(row, :region, avail))
         ps, pe = period_bounds("week", _get(row, :epiweek, avail))
         iss = parse_issue("week", _get(row, :issue, avail))
-        lag = coerce_lag(_get(row, :lag, avail))
+        lag = coerce_int(_get(row, :lag, avail))
         # The denominator of ili and wili. The fan-out puts it in a different row, so
         # carrying it here saves every consumer a join.
         patients = coerce_float(_get(row, :num_patients, avail))

@@ -43,7 +43,7 @@ jobs:
         id: check
         env:
           # Unset resolves to "", which HTTPTransport treats as no key and falls back to
-          # the anonymous 60 requests/hour limit. One run costs 8.
+          # the anonymous 60 requests/hour limit. One run costs 10.
           DELPHI_EPIDATA_KEY: ${{ secrets.DELPHI_EPIDATA_KEY }}
         run: |
           set +e
@@ -116,9 +116,11 @@ jobs:
             echo "only thing that needs updating:"
             echo
             echo "- [ ] If the CSV header moved, update \`COVIDCAST_CSV_HEADER\` in \`src/sources/delphi.jl\`"
+            echo "- [ ] If the covidcast_meta header moved, update \`COVIDCAST_META_CSV_HEADER\` in \`src/catalog.jl\`"
             echo "- [ ] If a status or result code changed, update \`decode_response\` and its tests"
             echo "- [ ] If a fluview field was renamed, update \`FLUVIEW_MEASURES\` in \`src/standardize.jl\`"
             echo "- [ ] Check the diff is a contract change, not just revised measurement values"
+            echo "- [ ] \`covidcast_meta_success.csv\` carries live nssp/week values that move on every refresh; \`test/test_catalog.jl\` pins only the retired chng/day row exactly"
             echo
             echo "<details><summary>Test output</summary>"
             echo

@@ -106,6 +106,75 @@ all = vcat(tbl, flu)
 EpiDataKit.save(all, "combined.arrow")
 ```
 
+### Discovering datasets
+
+`catalog` lists what you can fetch, so signal names do not have to come from Delphi's
+website:
+
+```julia
+cat = catalog()
+length(cat)
+# 3014
+
+covid = filter(e -> e.source === :nssp && e.signal === :pct_ed_visits_covid, cat)
+covid[1]
+# CatalogEntry(:nssp, :pct_ed_visits_covid, :week, COUNTY,
+#              Date("2022-09-25"), Date("2026-08-15"), 2426,
+#              Date("2026-08-22"), 1, 203, :fetch_covidcast)
+```
+
+`fetch_with` names the function to call, as a `Symbol`, so you map it to the actual function
+by hand:
+
+```julia
+e = covid[1]
+tbl = fetch_covidcast(data_source = String(e.source), signal = String(e.signal),
+                       time_type = String(e.time_type), geo_type = "county",
+                       time_values = e.last_period)
+
+tbl[1]
+# EpiObservation(:nssp, :pct_ed_visits_covid, COUNTY, "08001",
+#                Date("2026-08-09"), Date("2026-08-15"),
+#                0.15, missing, missing, Date("2026-08-22"), 1, NOT_MISSING)
+```
+
+```julia
+sources = unique(cat.source)
+length(sources)
+# 27
+
+print(filter(in((:nssp, :chng, :fluview)), sources))
+# [:chng, :nssp, :fluview]
+```
+
+Each entry is one signal at one time resolution and one geographic level, with the extent of
+the data and the function that fetches it. It is a Tables.jl source like `EpiTable`, so
+filtering and `DataFrame` conversion both work:
+
+```julia
+filter(e -> e.source === :nssp && e.geo_level == STATE, cat)
+```
+
+Keywords narrow it, and `source` makes the request much smaller:
+
+```julia
+catalog(source = "nssp")
+catalog(source = "nssp", signal = "pct_ed_visits_covid")
+catalog(time_type = "week", geo_type = "county")
+```
+
+One call is one request, and the unfiltered reply is about 400 KB, so bind the result
+instead of calling it in a loop.
+
+The `fluview` entries are the exception to the coverage columns. The API publishes only a
+whole-table summary for that endpoint, not per-signal extents, so those rows carry the
+signal, the resolution, and the level, and leave the rest `missing`.
+
+Those rows are also the signal list, not verified coverage: they say the measure exists,
+not that every level of it returns data when fetched. `num_age_2` is a known example — it is
+`null` in every recorded fluview reply, so `fetch_fluview` returns no observations for it at
+any level.
+
 ### Data Revisions
 
 `as_of` reconstructs what was known on a given date,
@@ -202,11 +271,12 @@ Reach for `load` when you intend to modify the table, or when it must outlive th
 ## Scope
 
 Working now: the `covidcast` and `fluview` endpoints end to end — fetch, retry with
-backoff, standardize, Arrow round-trip — with an offline test suite.
+backoff, standardize, Arrow round-trip — plus `catalog` for discovering what is available,
+all with an offline test suite.
 
-Not yet: `covidcast_meta` catalog validation, so signal names have to be looked up in
-Delphi's documentation rather than discovered from the package. Also absent: a rate
-limiter, concurrent chunked fetch, and an incremental on-disk cache.
+Not yet: `catalog` does not cache, so each call costs a request, and `fetch_covidcast` does
+not check a signal name against it before sending. Also absent: a rate limiter, concurrent
+chunked fetch, and an incremental on-disk cache.
 
 ## Citation
 

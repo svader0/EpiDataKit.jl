@@ -131,6 +131,56 @@ observation per measurement.
 """
 struct DelphiFluView <: AbstractSource end
 
+"""
+    DelphiCovidcastMeta()
+
+The Delphi Epidata `covidcast_meta` endpoint: one row per signal and geographic level,
+describing coverage rather than measurements. Read by [`catalog`](@ref).
+"""
+struct DelphiCovidcastMeta <: AbstractSource end
+
+# --------------------------------------------------
+#                   CATALOG SCHEMA
+# --------------------------------------------------
+
+"""
+    CatalogEntry
+
+One dataset you can fetch: a signal, at one time resolution, at one geographic level.
+
+`first_period` and `last_period` bound the data that exists, on the same closed-interval
+convention [`EpiObservation`](@ref) uses. `last_issue` is the most recent vintage published.
+`fetch_with` names the function that retrieves it.
+
+The extent columns admit `missing` because not every endpoint publishes them. `fluview`
+reports one summary row for its whole table rather than per-signal coverage, so its entries
+carry the signal, the resolution, and the level, and nothing else.
+"""
+struct CatalogEntry
+    source::Symbol
+    signal::Symbol
+    time_type::Symbol
+    geo_level::GeoLevel
+    first_period::Union{Date,Missing}
+    last_period::Union{Date,Missing}
+    num_locations::Union{Int,Missing}
+    last_issue::Union{Date,Missing}
+    min_lag::Union{Int,Missing}
+    max_lag::Union{Int,Missing}
+    fetch_with::Symbol
+end
+
+"""
+    CatalogTable
+
+A column-oriented collection of [`CatalogEntry`](@ref), built by [`catalog`](@ref).
+
+Like [`EpiTable`](@ref) it is a `StructArray` and so a Tables.jl source, which is what makes
+`DataFrame(cat)` and `unique(cat.source)` both work. It is not an `EpiTable` and does not
+describe observations, so [`save`](@ref) and [`load`](@ref) do not apply to it.
+"""
+const CatalogTable = StructArray{CatalogEntry}
+
 # --------------------------------------------------
 #                   ERROR TYPES
 # --------------------------------------------------
