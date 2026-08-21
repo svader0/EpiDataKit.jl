@@ -43,7 +43,7 @@ jobs:
         id: check
         env:
           # Unset resolves to "", which HTTPTransport treats as no key and falls back to
-          # the anonymous 60 requests/hour limit. One run costs 8.
+          # the anonymous 60 requests/hour limit. One run costs 10.
           DELPHI_EPIDATA_KEY: ${{ secrets.DELPHI_EPIDATA_KEY }}
         run: |
           set +e
