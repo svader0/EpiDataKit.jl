@@ -89,8 +89,10 @@ function decode_response(src::AbstractSource, resp::EpiResponse)
 
     # `geo_value` is forced to String because CSV parsing would otherwise read a county
     # FIPS code such as "06075" as the integer 6075 and lose the leading zero, silently
-    # turning it into a different, real county code.
-    return CSV.File(resp.body; types = Dict("geo_value" => String), stringtype = String)
+    # turning it into a different, real county code. `validate = false` lets an endpoint
+    # with no `geo_value` column, such as `covidcast_meta`, share this same decoder.
+    return CSV.File(resp.body; types = Dict("geo_value" => String), stringtype = String,
+                     validate = false)
 end
 
 # ---------------------------------------------------------------------------

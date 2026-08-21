@@ -1,6 +1,7 @@
 using Dates
 using EpiDataKit: empty_catalog, DelphiCovidcastMeta, COVIDCAST_META_ENDPOINT,
-                  COVIDCAST_META_CSV_HEADER, csv_header, endpoint, catalog_params
+                  COVIDCAST_META_CSV_HEADER, csv_header, endpoint, catalog_params,
+                  catalog_entries, coerce_int, decode_response, mock_response
 
 # The catalog answers "what can I fetch", so it is a different schema from EpiObservation
 # and a different file from src/sources/. These tests pin both halves of it: the live
@@ -74,5 +75,64 @@ using EpiDataKit: empty_catalog, DelphiCovidcastMeta, COVIDCAST_META_ENDPOINT,
         # understand, so without a local check a typo is indistinguishable from no data.
         @test_throws ValidationError catalog_params(time_type = "year")
         @test_throws ValidationError catalog_params(geo_type = "planet")
+    end
+
+    @testset "meta rows become catalog entries" begin
+        src = DelphiCovidcastMeta()
+        raw = decode_response(src, mock_response(fixture("covidcast_meta_success.csv")))
+        cat = catalog_entries(raw)
+
+        @test cat isa CatalogTable
+        @test length(cat) == 13
+        @test Set(cat.source) == Set([:chng, :nssp])
+        @test Set(cat.time_type) == Set([:day, :week])
+        @test all(==(:fetch_covidcast), cat.fetch_with)
+        # hsa_nci reached the API before it reached this package, so it is the level most
+        # worth pinning.
+        @test HSA_NCI in cat.geo_level
+        @test length(unique(cat.geo_level)) == 7
+    end
+
+    @testset "packed times become the interval they denote" begin
+        src = DelphiCovidcastMeta()
+        cat = catalog_entries(decode_response(src,
+            mock_response(fixture("covidcast_meta_success.csv"))))
+
+        # A daily row's extent is the day itself, on both ends.
+        day = cat[findfirst(==(:day), cat.time_type)]
+        @test day.first_period == Date(2020, 2, 1)     # min_time 20200201
+        @test day.last_period == Date(2024, 2, 14)     # max_time 20240214
+        @test day.last_issue == Date(2024, 2, 19)      # max_issue 20240219
+
+        # A weekly row's extent opens on the Sunday of min_time's MMWR week and closes on
+        # the Saturday of max_time's, so the two ends read different halves of
+        # period_bounds. Taking both from the same half would be six days out.
+        wk = cat[findfirst(==(:week), cat.time_type)]
+        @test wk.first_period == Date(2022, 9, 25)     # 202239 opens Sun 2022-09-25
+        @test wk.last_period == Date(2026, 8, 15)      # 202632 closes Sat 2026-08-15
+        @test wk.last_issue == Date(2026, 8, 22)       # 202633 closes Sat 2026-08-22
+        @test dayofweek(wk.first_period) == 7          # Sunday
+        @test dayofweek(wk.last_period) == 6           # Saturday
+    end
+
+    @testset "counts and lags come across as integers" begin
+        src = DelphiCovidcastMeta()
+        cat = catalog_entries(decode_response(src,
+            mock_response(fixture("covidcast_meta_success.csv"))))
+
+        nat = cat[findall(==(NATION), cat.geo_level)]
+        @test all(==(1), nat.num_locations)
+        @test 2426 in cat.num_locations                # nssp at county level
+        @test all(l -> l isa Int && l >= 0, cat.min_lag)
+        @test all(l -> l isa Int && l >= 0, cat.max_lag)
+    end
+
+    @testset "coerce_int reads a whole number however it arrives" begin
+        # Renamed from coerce_lag, because the catalog reads num_locations with it too.
+        @test coerce_int(51) == 51
+        @test coerce_int("51") == 51
+        @test coerce_int(51.0) == 51
+        @test coerce_int(missing) === missing
+        @test coerce_int("") === missing
     end
 end

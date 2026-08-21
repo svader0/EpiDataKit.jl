@@ -86,3 +86,60 @@ function catalog_params(; source = nothing, signal = nothing,
     geo_type === nothing || parse_geo_level(geo_type)  # throws on an unknown geo_type
     return params
 end
+
+# ---------------------------------------------------------------------------
+# Row conversion
+# ---------------------------------------------------------------------------
+
+"""
+    catalog_entries(raw) -> CatalogTable
+
+Convert a decoded `covidcast_meta` payload into [`CatalogEntry`](@ref) rows.
+
+`min_time`, `max_time`, and `max_issue` arrive in the row's own `time_type` encoding, so they
+go through the same [`period_bounds`](@ref) and [`parse_issue`](@ref) the observation path
+uses. `min_time` takes the opening bound and `max_time` the closing one, which for a weekly
+row are six days apart.
+
+A row whose `geo_type` this package does not recognize is dropped with a warning rather than
+throwing. `hsa_nci` appeared in this endpoint before it appeared in [`GEO_TYPE_MAP`](@ref),
+and [`catalog`](@ref) is the function you would call to discover that, so it must not be the
+one that dies on it.
+"""
+function catalog_entries(raw)
+    rows = Tables.rows(raw)
+    avail = _colnames(raw)
+    entries = CatalogEntry[]
+    unknown = Set{String}()
+
+    for row in rows
+        tt = lowercase(strip(string(_get(row, :time_type, avail))))
+        geo = String(strip(string(_get(row, :geo_type, avail))))
+        lvl = get(GEO_TYPE_MAP, lowercase(geo), nothing)
+        if lvl === nothing
+            push!(unknown, geo)
+            continue
+        end
+
+        push!(entries, CatalogEntry(
+            _require_symbol(_get(row, :data_source, avail), :data_source),
+            _require_symbol(_get(row, :signal, avail), :signal),
+            Symbol(tt),
+            lvl,
+            period_bounds(tt, _get(row, :min_time, avail))[1],
+            period_bounds(tt, _get(row, :max_time, avail))[2],
+            coerce_int(_get(row, :num_locations, avail)),
+            parse_issue(tt, _get(row, :max_issue, avail)),
+            coerce_int(_get(row, :min_lag, avail)),
+            coerce_int(_get(row, :max_lag, avail)),
+            :fetch_covidcast,
+        ))
+    end
+
+    isempty(unknown) || @warn(
+        "catalog dropped rows carrying a geo_type this version does not know; " *
+        "upgrade EpiDataKit or open an issue",
+        geo_types = sort!(collect(unknown)))
+
+    return isempty(entries) ? empty_catalog() : CatalogTable(entries)
+end
