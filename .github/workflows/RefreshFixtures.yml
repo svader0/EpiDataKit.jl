@@ -120,6 +120,7 @@ jobs:
             echo "- [ ] If a status or result code changed, update \`decode_response\` and its tests"
             echo "- [ ] If a fluview field was renamed, update \`FLUVIEW_MEASURES\` in \`src/standardize.jl\`"
             echo "- [ ] Check the diff is a contract change, not just revised measurement values"
+            echo "- [ ] \`covidcast_meta_success.csv\` carries live nssp/week values that move on every refresh; \`test/test_catalog.jl\` pins only the retired chng/day row exactly"
             echo
             echo "<details><summary>Test output</summary>"
             echo

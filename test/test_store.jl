@@ -106,6 +106,15 @@ end
         end
     end
 
+    @testset "save rejects anything that is not an EpiTable" begin
+        # CatalogTable is a StructArray too, but a different schema: writing one through
+        # this path would produce a valid Arrow file that load then refuses to read back.
+        mktempdir() do dir
+            @test_throws MethodError save(CatalogTable(CatalogEntry[]),
+                                           joinpath(dir, "cat.arrow"))
+        end
+    end
+
     @testset "load rejects files that are not ours, with a typed error" begin
         # Regression: these used to surface as a bare `KeyError: key :source not found`
         # or an `ArgumentError` from the enum constructor, neither an EpiDataKitError,

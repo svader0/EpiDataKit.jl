@@ -121,7 +121,24 @@ covid[1]
 # CatalogEntry(:nssp, :pct_ed_visits_covid, :week, COUNTY,
 #              Date("2022-09-25"), Date("2026-08-15"), 2426,
 #              Date("2026-08-22"), 1, 203, :fetch_covidcast)
+```
 
+`fetch_with` names the function to call, as a `Symbol`, so you map it to the actual function
+by hand:
+
+```julia
+e = covid[1]
+tbl = fetch_covidcast(data_source = String(e.source), signal = String(e.signal),
+                       time_type = String(e.time_type), geo_type = "county",
+                       time_values = e.last_period)
+
+tbl[1]
+# EpiObservation(:nssp, :pct_ed_visits_covid, COUNTY, "08001",
+#                Date("2026-08-09"), Date("2026-08-15"),
+#                0.15, missing, missing, Date("2026-08-22"), 1, NOT_MISSING)
+```
+
+```julia
 sources = unique(cat.source)
 length(sources)
 # 27
@@ -152,6 +169,11 @@ instead of calling it in a loop.
 The `fluview` entries are the exception to the coverage columns. The API publishes only a
 whole-table summary for that endpoint, not per-signal extents, so those rows carry the
 signal, the resolution, and the level, and leave the rest `missing`.
+
+Those rows are also the signal list, not verified coverage: they say the measure exists,
+not that every level of it returns data when fetched. `num_age_2` is a known example — it is
+`null` in every recorded fluview reply, so `fetch_fluview` returns no observations for it at
+any level.
 
 ### Data Revisions
 

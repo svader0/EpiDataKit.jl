@@ -36,17 +36,8 @@ CatalogTable(entries::AbstractVector{CatalogEntry}) = StructArray(entries)
 
 A zero-row catalog with the right column types, for the half of a query that matched
 nothing.
-
-Spelled out rather than `StructArray(CatalogEntry[])` because the two halves of
-[`catalog`](@ref) are combined with `vcat`, which needs their column types to agree.
 """
-empty_catalog() = StructArray{CatalogEntry}((
-    source = Symbol[], signal = Symbol[], time_type = Symbol[], geo_level = GeoLevel[],
-    first_period = Union{Date,Missing}[], last_period = Union{Date,Missing}[],
-    num_locations = Union{Int,Missing}[], last_issue = Union{Date,Missing}[],
-    min_lag = Union{Int,Missing}[], max_lag = Union{Int,Missing}[],
-    fetch_with = Symbol[],
-))
+empty_catalog() = CatalogTable(CatalogEntry[])
 
 # ---------------------------------------------------------------------------
 # Query construction
@@ -219,6 +210,11 @@ data and the function that retrieves it. The `covidcast` half comes from the liv
 per-signal coverage for it, so those rows carry `missing` for every extent column. Asking
 for `source = "fluview"` makes no request at all.
 
+The `fluview` rows are the signal list, not verified coverage: they say the measure exists
+somewhere in the endpoint, not that every level of it returns data. `num_age_2` is a known
+example — it is `null` in every recorded reply, so `fetch_fluview` returns zero observations
+for it at any geographic level.
+
 One call is one request against a cap of 60/hour for anonymous callers, and the unfiltered
 reply is about 400 KB, so bind the result rather than calling this in a loop. `source` and
 `time_type` narrow the request itself, and `signal` narrows it too when `source` is given.
@@ -229,6 +225,10 @@ Throws [`NoResultsError`](@ref) when no dataset matches at all. The result is a
 """
 function catalog(; source = nothing, signal = nothing, time_type = nothing,
                    geo_type = nothing, transport::AbstractTransport = HTTPTransport())
+    # catalog_params already turns a bare source into signals=source:*, so a literal "*"
+    # here has to collapse to the same "no filter" rather than reach _matches, which would
+    # compare :* against every real signal name and match none.
+    signal = (signal === nothing || string(signal) == "*") ? nothing : signal
     params = catalog_params(; source, signal, time_type, geo_type)
     fluview_only = _is_fluview_only(source)
 

@@ -37,8 +37,8 @@ end
     end
 
     @testset "an empty catalog keeps its column types" begin
-        # vcat of the two halves needs matching column types, and an empty StructArray
-        # built from an empty Vector does not reliably keep them.
+        # vcat of the two halves needs matching column types, so this is worth pinning
+        # even though it is `empty_catalog`'s only job.
         cat = empty_catalog()
         @test cat isa CatalogTable
         @test isempty(cat)
@@ -108,19 +108,27 @@ end
         cat = catalog_entries(decode_response(src,
             mock_response(fixture("covidcast_meta_success.csv"))))
 
-        # A daily row's extent is the day itself, on both ends.
+        # A daily row's extent is the day itself, on both ends. chng/smoothed_outpatient_covid
+        # is retired (max_time=20240214, max_issue=20240219, last_update from 2024), so a
+        # refresh will not move these dates and they are safe to pin exactly.
         day = cat[findfirst(==(:day), cat.time_type)]
         @test day.first_period == Date(2020, 2, 1)     # min_time 20200201
         @test day.last_period == Date(2024, 2, 14)     # max_time 20240214
         @test day.last_issue == Date(2024, 2, 19)      # max_issue 20240219
 
+        # nssp/pct_ed_visits_covid is live: max_time and max_issue advance every week, so
+        # only min_time (a historical start) and the day-of-week structure are pinned
+        # exactly. last_period and last_issue instead get invariants that still fail if
+        # period_bounds's two halves were swapped.
+        #
         # A weekly row's extent opens on the Sunday of min_time's MMWR week and closes on
         # the Saturday of max_time's, so the two ends read different halves of
         # period_bounds. Taking both from the same half would be six days out.
         wk = cat[findfirst(==(:week), cat.time_type)]
         @test wk.first_period == Date(2022, 9, 25)     # 202239 opens Sun 2022-09-25
-        @test wk.last_period == Date(2026, 8, 15)      # 202632 closes Sat 2026-08-15
-        @test wk.last_issue == Date(2026, 8, 22)       # 202633 closes Sat 2026-08-22
+        @test wk.last_period > wk.first_period
+        @test wk.last_issue >= wk.last_period          # an issue is published at or after
+                                                        # the period it revises
         @test dayofweek(wk.first_period) == 7          # Sunday
         @test dayofweek(wk.last_period) == 6           # Saturday
     end
@@ -132,7 +140,9 @@ end
 
         nat = cat[findall(==(NATION), cat.geo_level)]
         @test all(==(1), nat.num_locations)
-        @test 2426 in cat.num_locations                # nssp at county level
+        # nssp's county count moves as counties are added or dropped upstream, so the
+        # invariant worth pinning is the type and sign, not a specific count.
+        @test all(n -> n isa Int && n > 0, cat.num_locations)
         @test all(l -> l isa Int && l >= 0, cat.min_lag)
         @test all(l -> l isa Int && l >= 0, cat.max_lag)
     end
@@ -262,6 +272,28 @@ end
         @test !occursin("signals", only(t.calls))
         @test all(==(:wili), cat.signal)
         @test length(cat) == length(FLUVIEW_GEO_LEVELS)
+    end
+
+    @testset "a wildcard signal behaves like no signal filter" begin
+        # catalog_params already turns a bare source into signals=source:*, so a literal
+        # "*" from the caller has to collapse to the same request, not reach _matches as a
+        # signal name nothing will equal.
+        t1 = mock_for_catalog(fixture("covidcast_meta_success.csv"); source = "nssp")
+        plain = catalog(; transport = t1, source = "nssp")
+
+        t2 = mock_for_catalog(fixture("covidcast_meta_success.csv"); source = "nssp")
+        starred = catalog(; transport = t2, source = "nssp", signal = "*")
+
+        @test only(t2.calls) == only(t1.calls)
+        @test starred.signal == plain.signal
+        @test starred.time_type == plain.time_type
+        @test starred.geo_level == plain.geo_level
+        @test starred.last_issue == plain.last_issue
+
+        # A Symbol wildcard is accepted the same way every other keyword accepts one.
+        t3 = mock_for_catalog(fixture("covidcast_meta_success.csv"); source = "nssp")
+        starred_sym = catalog(; transport = t3, source = "nssp", signal = :*)
+        @test starred_sym.signal == plain.signal
     end
 
     @testset "asking only for fluview makes no request" begin
