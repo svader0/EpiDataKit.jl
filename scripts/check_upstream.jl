@@ -28,7 +28,8 @@ using Dates
 using EpiDataKit
 using EpiDataKit: HTTPTransport, fetch_raw, decode_response, standardize, body_string,
                   ratelimit, DelphiCovidcast, COVIDCAST_CSV_HEADER, COVIDCAST_ENDPOINT,
-                  DelphiFluView, FLUVIEW_ENDPOINT, FLUVIEW_MEASURES
+                  DelphiFluView, FLUVIEW_ENDPOINT, FLUVIEW_MEASURES,
+                  COVIDCAST_META_ENDPOINT, COVIDCAST_META_CSV_HEADER
 
 using JSON3
 
@@ -182,6 +183,30 @@ const CHECKS = [
             return problems
         end,
     ),
+    (
+        name = "covidcast_meta CSV success",
+        endpoint = COVIDCAST_META_ENDPOINT,
+        fixture = "covidcast_meta_success.csv",
+        params = Dict("signals" => "nssp:pct_ed_visits_covid,chng:smoothed_outpatient_covid",
+                      "format" => "csv"),
+        check = function (resp)
+            problems = String[]
+            resp.status == 200 || push!(problems, "expected status 200, got $(resp.status)")
+            body = body_string(resp)
+            if isempty(strip(body))
+                push!(problems, "expected a CSV body, got an empty one")
+                return problems
+            end
+            lines = split(strip(body), '\n')
+            header = strip(lines[1])
+            if header != COVIDCAST_META_CSV_HEADER
+                # decode_response gates on this header, exactly as it does for covidcast.
+                push!(problems, "CSV header changed\n      expected: $COVIDCAST_META_CSV_HEADER\n      got:      $header")
+            end
+            length(lines) >= 2 || push!(problems, "expected at least one data row, got header only")
+            return problems
+        end,
+    ),
 ]
 
 function main()
@@ -281,6 +306,27 @@ function main()
         failed += 1
     end
 
+    print("  ", rpad("catalog end to end", 34))
+    try
+        cat = catalog()
+        if length(cat) == 0
+            println("DRIFT")
+            println("      returned zero entries")
+            failed += 1
+        elseif :fluview ∉ cat.source
+            println("DRIFT")
+            println("      the static fluview half is missing")
+            failed += 1
+        else
+            println("ok (", length(cat), " entries, ",
+                    length(unique(cat.source)), " sources)")
+        end
+    catch e
+        println("ERROR")
+        println("      ", sprint(showerror, e))
+        failed += 1
+    end
+
     if last_resp !== nothing
         rl = ratelimit(last_resp)
         rl.remaining === nothing ||
@@ -301,8 +347,9 @@ function main()
     println("What to do:")
     println("  1. Re-record with: julia --project=. scripts/check_upstream.jl --write")
     println("  2. If the CSV header changed, update COVIDCAST_CSV_HEADER in src/sources/delphi.jl.")
-    println("  3. If a status or result code changed, update decode_response and its tests.")
-    println("  4. Run the offline suite: julia --project=. -e 'using Pkg; Pkg.test()'")
+    println("  3. If the covidcast_meta header changed, update COVIDCAST_META_CSV_HEADER in src/catalog.jl.")
+    println("  4. If a status or result code changed, update decode_response and its tests.")
+    println("  5. Run the offline suite: julia --project=. -e 'using Pkg; Pkg.test()'")
     return 1
 end
 

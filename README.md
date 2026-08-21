@@ -106,6 +106,47 @@ all = vcat(tbl, flu)
 EpiDataKit.save(all, "combined.arrow")
 ```
 
+### Discovering datasets
+
+`catalog` lists what you can fetch, so signal names do not have to come from Delphi's
+website:
+
+```julia
+cat = catalog()
+# 3014-element CatalogTable
+
+cat[1]
+# CatalogEntry(:chng, :smoothed_outpatient_covid, :day, COUNTY,
+#              Date("2020-02-01"), Date("2024-02-14"), 3118,
+#              Date("2024-02-19"), 3, 674, :fetch_covidcast)
+
+unique(cat.source)
+# [:chng, :nssp, Symbol("fb-survey"), …, :fluview]
+```
+
+Each entry is one signal at one time resolution and one geographic level, with the extent of
+the data and the function that fetches it. It is a Tables.jl source like `EpiTable`, so
+filtering and `DataFrame` conversion both work:
+
+```julia
+filter(e -> e.source === :nssp && e.geo_level == STATE, cat)
+```
+
+Keywords narrow it, and `source` makes the request much smaller:
+
+```julia
+catalog(source = "nssp")
+catalog(source = "nssp", signal = "pct_ed_visits_covid")
+catalog(time_type = "week", geo_type = "county")
+```
+
+One call is one request, and the unfiltered reply is about 400 KB, so bind the result
+instead of calling it in a loop.
+
+The `fluview` entries are the exception to the coverage columns. The API publishes only a
+whole-table summary for that endpoint, not per-signal extents, so those rows carry the
+signal, the resolution, and the level, and leave the rest `missing`.
+
 ### Data Revisions
 
 `as_of` reconstructs what was known on a given date,
@@ -202,11 +243,12 @@ Reach for `load` when you intend to modify the table, or when it must outlive th
 ## Scope
 
 Working now: the `covidcast` and `fluview` endpoints end to end — fetch, retry with
-backoff, standardize, Arrow round-trip — with an offline test suite.
+backoff, standardize, Arrow round-trip — plus `catalog` for discovering what is available,
+all with an offline test suite.
 
-Not yet: `covidcast_meta` catalog validation, so signal names have to be looked up in
-Delphi's documentation rather than discovered from the package. Also absent: a rate
-limiter, concurrent chunked fetch, and an incremental on-disk cache.
+Not yet: `catalog` does not cache, so each call costs a request, and `fetch_covidcast` does
+not check a signal name against it before sending. Also absent: a rate limiter, concurrent
+chunked fetch, and an incremental on-disk cache.
 
 ## Citation
 

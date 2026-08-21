@@ -116,6 +116,7 @@ jobs:
             echo "only thing that needs updating:"
             echo
             echo "- [ ] If the CSV header moved, update \`COVIDCAST_CSV_HEADER\` in \`src/sources/delphi.jl\`"
+            echo "- [ ] If the covidcast_meta header moved, update \`COVIDCAST_META_CSV_HEADER\` in \`src/catalog.jl\`"
             echo "- [ ] If a status or result code changed, update \`decode_response\` and its tests"
             echo "- [ ] If a fluview field was renamed, update \`FLUVIEW_MEASURES\` in \`src/standardize.jl\`"
             echo "- [ ] Check the diff is a contract change, not just revised measurement values"

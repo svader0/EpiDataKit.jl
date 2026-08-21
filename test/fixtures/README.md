@@ -30,6 +30,21 @@ on `result: 1` before reaching the CSV header check, so both endpoints share it.
 not a recording fault, and it is what pins the rule that a null measure produces no
 observation rather than a missing-valued one.
 
+## covidcast_meta — endpoint `covidcast_meta/`
+
+| File | Status | Query |
+|---|---|---|
+| `covidcast_meta_success.csv` | 200 | `signals=nssp:pct_ed_visits_covid,chng:smoothed_outpatient_covid&format=csv` — 13 rows, both time types, 7 geo types |
+
+The no-results case reuses `covidcast_noresults.csv`: this endpoint signals it the same way
+`covidcast` does, with a zero-byte body at status 200. It answers an unrecognized
+`geo_types` or `time_types` that way too, which is why `catalog_params` validates those
+locally.
+
+The fixture is two signals rather than the full 2,970-row reply on purpose. The parser cares
+about the header, both time encodings, and the set of geo types, and none of those need
+415 KB to pin.
+
 To re-record, run the maintenance script rather than issuing these by hand — it holds the
 same queries and rewrites every file here:
 
@@ -45,5 +60,5 @@ A response that is not upstream speaking — a 429 from the rate limit, or a 5xx
 balancer — is never recorded, so a bad moment cannot overwrite a good fixture with an
 error page.
 
-Mind the anonymous rate limit of 60 requests/hour; each run costs 8 requests — 6 contract
-checks plus one end-to-end fetch per endpoint.
+Mind the anonymous rate limit of 60 requests/hour; each run costs 10 requests — 7 contract
+checks plus one end-to-end call per endpoint.
