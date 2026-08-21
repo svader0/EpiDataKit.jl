@@ -47,3 +47,42 @@ empty_catalog() = StructArray{CatalogEntry}((
     min_lag = Union{Int,Missing}[], max_lag = Union{Int,Missing}[],
     fetch_with = Symbol[],
 ))
+
+# ---------------------------------------------------------------------------
+# Query construction
+# ---------------------------------------------------------------------------
+
+"""
+    catalog_params(; source = nothing, signal = nothing, time_type = nothing,
+                     geo_type = nothing) -> Dict{String,String}
+
+Build and locally validate the query for one `covidcast_meta` request.
+
+`source` and `time_type` narrow the request upstream. `signal` does too, but only alongside
+a `source`, since the wire form is a `source:signal` pair. `geo_type` is validated here and
+then applied to the result rather than sent: [`GEO_TYPE_MAP`](@ref) accepts `"hhs_region"`
+as an alias for `"hhs"`, and this endpoint answers an alias it does not know with an empty
+body rather than an error, so a valid filter would look like missing data.
+
+Both checks happen before any request, for the reason [`covidcast_params`](@ref) gives: the
+anonymous limit is 60 requests/hour and a typo should not cost one.
+"""
+function catalog_params(; source = nothing, signal = nothing,
+                          time_type = nothing, geo_type = nothing)
+    params = Dict{String,String}("format" => "csv")
+
+    if source !== nothing
+        sig = signal === nothing ? "*" : lowercase(strip(string(signal)))
+        params["signals"] = string(lowercase(strip(string(source))), ":", sig)
+    end
+
+    if time_type !== nothing
+        tt = lowercase(strip(string(time_type)))
+        tt in ("day", "week") ||
+            throw(ValidationError("time_type must be \"day\" or \"week\", got $(repr(time_type))"))
+        params["time_types"] = tt
+    end
+
+    geo_type === nothing || parse_geo_level(geo_type)  # throws on an unknown geo_type
+    return params
+end

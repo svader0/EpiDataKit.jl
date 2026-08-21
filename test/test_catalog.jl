@@ -1,6 +1,6 @@
 using Dates
 using EpiDataKit: empty_catalog, DelphiCovidcastMeta, COVIDCAST_META_ENDPOINT,
-                  COVIDCAST_META_CSV_HEADER, csv_header, endpoint
+                  COVIDCAST_META_CSV_HEADER, csv_header, endpoint, catalog_params
 
 # The catalog answers "what can I fetch", so it is a different schema from EpiObservation
 # and a different file from src/sources/. These tests pin both halves of it: the live
@@ -43,5 +43,36 @@ using EpiDataKit: empty_catalog, DelphiCovidcastMeta, COVIDCAST_META_ENDPOINT,
         # constant is a contract with the server, not a convenience.
         @test csv_header(src) == COVIDCAST_META_CSV_HEADER
         @test count(==(','), COVIDCAST_META_CSV_HEADER) == 14
+    end
+
+    @testset "only the filters the endpoint honors reach the wire" begin
+        @test catalog_params() == Dict("format" => "csv")
+
+        p = catalog_params(source = "nssp")
+        @test p["signals"] == "nssp:*"
+
+        p = catalog_params(source = "nssp", signal = "pct_ed_visits_covid")
+        @test p["signals"] == "nssp:pct_ed_visits_covid"
+
+        # A signal without its source cannot be written as a `source:signal` pair, so it
+        # narrows nothing upstream and is applied to the result instead.
+        @test !haskey(catalog_params(signal = "wili"), "signals")
+
+        @test catalog_params(time_type = "WEEK ")["time_types"] == "week"
+
+        # geo_type is validated but never sent. GEO_TYPE_MAP accepts "hhs_region" as an
+        # alias for "hhs", and this endpoint answers an alias it does not know with an
+        # empty body rather than an error, so sending it would look like "no data".
+        @test !haskey(catalog_params(geo_type = "hhs_region"), "geo_types")
+        @test !haskey(catalog_params(geo_type = "state"), "geo_types")
+        # A GeoLevel is accepted directly, via parse_geo_level's passthrough method.
+        @test catalog_params(geo_type = STATE) == Dict("format" => "csv")
+    end
+
+    @testset "a misspelled filter is caught before a request is built" begin
+        # This endpoint returns 200 with an empty body for a parameter it does not
+        # understand, so without a local check a typo is indistinguishable from no data.
+        @test_throws ValidationError catalog_params(time_type = "year")
+        @test_throws ValidationError catalog_params(geo_type = "planet")
     end
 end
