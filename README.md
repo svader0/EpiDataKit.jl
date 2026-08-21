@@ -113,15 +113,21 @@ website:
 
 ```julia
 cat = catalog()
-# 3014-element CatalogTable
+length(cat)
+# 3014
 
-cat[1]
-# CatalogEntry(:chng, :smoothed_outpatient_covid, :day, COUNTY,
-#              Date("2020-02-01"), Date("2024-02-14"), 3118,
-#              Date("2024-02-19"), 3, 674, :fetch_covidcast)
+covid = filter(e -> e.source === :nssp && e.signal === :pct_ed_visits_covid, cat)
+covid[1]
+# CatalogEntry(:nssp, :pct_ed_visits_covid, :week, COUNTY,
+#              Date("2022-09-25"), Date("2026-08-15"), 2426,
+#              Date("2026-08-22"), 1, 203, :fetch_covidcast)
 
-unique(cat.source)
-# [:chng, :nssp, Symbol("fb-survey"), …, :fluview]
+sources = unique(cat.source)
+length(sources)
+# 27
+
+print(filter(in((:nssp, :chng, :fluview)), sources))
+# [:chng, :nssp, :fluview]
 ```
 
 Each entry is one signal at one time resolution and one geographic level, with the extent of
