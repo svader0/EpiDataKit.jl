@@ -1,7 +1,8 @@
 using Dates
 using EpiDataKit: empty_catalog, DelphiCovidcastMeta, COVIDCAST_META_ENDPOINT,
                   COVIDCAST_META_CSV_HEADER, csv_header, endpoint, catalog_params,
-                  catalog_entries, coerce_int, decode_response, mock_response
+                  catalog_entries, coerce_int, decode_response, mock_response,
+                  fluview_catalog_entries, FLUVIEW_GEO_LEVELS, FLUVIEW_MEASURES, fluview_geo
 
 # The catalog answers "what can I fetch", so it is a different schema from EpiObservation
 # and a different file from src/sources/. These tests pin both halves of it: the live
@@ -134,5 +135,38 @@ using EpiDataKit: empty_catalog, DelphiCovidcastMeta, COVIDCAST_META_ENDPOINT,
         @test coerce_int(51.0) == 51
         @test coerce_int(missing) === missing
         @test coerce_int("") === missing
+    end
+
+    @testset "fluview contributes a row per measure and level" begin
+        cat = fluview_catalog_entries()
+
+        @test cat isa CatalogTable
+        @test length(cat) == length(FLUVIEW_MEASURES) * length(FLUVIEW_GEO_LEVELS)
+        @test length(cat) == 44
+        @test all(==(:fluview), cat.source)
+        @test all(==(:fetch_fluview), cat.fetch_with)
+        @test all(==(:week), cat.time_type)
+        @test Set(cat.signal) == Set(FLUVIEW_MEASURES)
+        @test Set(cat.geo_level) == Set(FLUVIEW_GEO_LEVELS)
+
+        # The API publishes no per-signal coverage for fluview, and inventing one would be
+        # worse than admitting it.
+        @test all(ismissing, cat.first_period)
+        @test all(ismissing, cat.last_period)
+        @test all(ismissing, cat.num_locations)
+        @test all(ismissing, cat.last_issue)
+        @test all(ismissing, cat.min_lag)
+        @test all(ismissing, cat.max_lag)
+    end
+
+    @testset "every listed fluview level is one fetch_fluview accepts" begin
+        # These two lists live in different files and can drift apart. A level the catalog
+        # advertises but fluview_geo rejects is a broken promise.
+        for (region, lvl) in (("nat", NATION), ("hhs1", HHS_REGION),
+                              ("cen1", CENSUS_DIVISION), ("ca", STATE))
+            @test fluview_geo(region)[1] === lvl
+            @test lvl in FLUVIEW_GEO_LEVELS
+        end
+        @test length(FLUVIEW_GEO_LEVELS) == 4
     end
 end

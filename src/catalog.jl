@@ -143,3 +143,28 @@ function catalog_entries(raw)
 
     return isempty(entries) ? empty_catalog() : CatalogTable(entries)
 end
+
+# ---------------------------------------------------------------------------
+# fluview
+# ---------------------------------------------------------------------------
+
+"""
+Geographic levels the `fluview` endpoint serves, matching what [`fluview_geo`](@ref)
+accepts: `nat`, `hhs1` to `hhs10`, `cen1` to `cen9`, and state abbreviations.
+"""
+const FLUVIEW_GEO_LEVELS = (NATION, HHS_REGION, CENSUS_DIVISION, STATE)
+
+"""
+    fluview_catalog_entries() -> CatalogTable
+
+The `fluview` half of the catalog, from static data and no request.
+
+`fluview_meta` reports one summary row for the whole table rather than per-signal coverage,
+so every extent column here is `missing`. Listing the signals anyway is the point: without
+these rows [`catalog`](@ref) reads as though this package cannot fetch ILI at all.
+"""
+fluview_catalog_entries() = CatalogTable([
+    CatalogEntry(:fluview, m, :week, lvl, missing, missing, missing, missing, missing,
+                 missing, :fetch_fluview)
+    for m in FLUVIEW_MEASURES for lvl in FLUVIEW_GEO_LEVELS
+])
