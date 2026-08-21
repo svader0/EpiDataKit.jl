@@ -168,3 +168,74 @@ fluview_catalog_entries() = CatalogTable([
                  missing, :fetch_fluview)
     for m in FLUVIEW_MEASURES for lvl in FLUVIEW_GEO_LEVELS
 ])
+
+# ---------------------------------------------------------------------------
+# The entry point
+# ---------------------------------------------------------------------------
+
+_is_fluview_only(source) =
+    source !== nothing && lowercase(strip(string(source))) == "fluview"
+
+function _matches(e::CatalogEntry, source, signal, time_type, geo_type)
+    source === nothing ||
+        Symbol(lowercase(strip(string(source)))) === e.source || return false
+    signal === nothing ||
+        Symbol(lowercase(strip(string(signal)))) === e.signal || return false
+    time_type === nothing ||
+        Symbol(lowercase(strip(string(time_type)))) === e.time_type || return false
+    geo_type === nothing || parse_geo_level(geo_type) === e.geo_level || return false
+    return true
+end
+
+function _covidcast_catalog(transport::AbstractTransport, params)
+    src = DelphiCovidcastMeta()
+    try
+        return catalog_entries(decode_response(src,
+            fetch_raw(transport, endpoint(src), params)))
+    catch e
+        # This filter matched no covidcast signal. The fluview half may still have rows, so
+        # whether the whole query found nothing is the caller's call, not this one's.
+        e isa NoResultsError && return empty_catalog()
+        rethrow()
+    end
+end
+
+"""
+    catalog(; source = nothing, signal = nothing, time_type = nothing, geo_type = nothing,
+              transport = HTTPTransport()) -> CatalogTable
+
+List the datasets this package can fetch.
+
+```julia
+cat = catalog()
+
+unique(cat.source)
+filter(e -> e.geo_level == STATE && e.time_type === :week, cat)
+```
+
+Each entry names a signal, a time resolution, and a geographic level, plus the extent of the
+data and the function that retrieves it. The `covidcast` half comes from the live
+`covidcast_meta` endpoint. The `fluview` half is static, because the API publishes no
+per-signal coverage for it, so those rows carry `missing` for every extent column. Asking
+for `source = "fluview"` makes no request at all.
+
+One call is one request against a cap of 60/hour for anonymous callers, and the unfiltered
+reply is about 400 KB, so bind the result rather than calling this in a loop. `source` and
+`time_type` narrow the request itself, and `signal` narrows it too when `source` is given.
+`geo_type` filters the result, for the reason [`catalog_params`](@ref) explains.
+
+Throws [`NoResultsError`](@ref) when no dataset matches at all. The result is a
+[`CatalogTable`](@ref), not an [`EpiTable`](@ref).
+"""
+function catalog(; source = nothing, signal = nothing, time_type = nothing,
+                   geo_type = nothing, transport::AbstractTransport = HTTPTransport())
+    params = catalog_params(; source, signal, time_type, geo_type)
+
+    covidcast = _is_fluview_only(source) ? empty_catalog() :
+                _covidcast_catalog(transport, params)
+
+    all_entries = vcat(covidcast, fluview_catalog_entries())
+    keep = findall(e -> _matches(e, source, signal, time_type, geo_type), all_entries)
+    isempty(keep) && throw(NoResultsError(request_key(COVIDCAST_META_ENDPOINT, params)))
+    return all_entries[keep]
+end

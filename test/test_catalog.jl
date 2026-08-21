@@ -3,11 +3,19 @@ using Logging
 using EpiDataKit: empty_catalog, DelphiCovidcastMeta, COVIDCAST_META_ENDPOINT,
                   COVIDCAST_META_CSV_HEADER, csv_header, endpoint, catalog_params,
                   catalog_entries, coerce_int, decode_response, mock_response,
-                  fluview_catalog_entries, FLUVIEW_GEO_LEVELS, FLUVIEW_MEASURES, fluview_geo
+                  fluview_catalog_entries, FLUVIEW_GEO_LEVELS, FLUVIEW_MEASURES, fluview_geo,
+                  catalog, request_key
 
 # The catalog answers "what can I fetch", so it is a different schema from EpiObservation
 # and a different file from src/sources/. These tests pin both halves of it: the live
 # covidcast_meta rows, and the static fluview rows that no metadata endpoint publishes.
+
+# Build a MockTransport that will answer exactly the request `catalog` should make.
+function mock_for_catalog(body; status = 200, kwargs...)
+    params = catalog_params(; kwargs...)
+    key = request_key(COVIDCAST_META_ENDPOINT, params)
+    return MockTransport(Dict(key => mock_response(body; status = status, request = key)))
+end
 
 @testset "catalog" begin
     @testset "the schema is a table that indexes as rows" begin
@@ -203,5 +211,103 @@ using EpiDataKit: empty_catalog, DelphiCovidcastMeta, COVIDCAST_META_ENDPOINT,
         # The vcat in `catalog` needs matching column types, so an empty result has to keep
         # them rather than collapse to Any.
         @test eltype(cat.first_period) == Union{Date,Missing}
+    end
+
+    @testset "end to end on a recorded response" begin
+        t = mock_for_catalog(fixture("covidcast_meta_success.csv"))
+        cat = catalog(; transport = t)
+
+        @test cat isa CatalogTable
+        # 13 covidcast rows from the fixture, plus the 44 static fluview rows.
+        @test length(cat) == 57
+        @test Set(cat.source) == Set([:chng, :nssp, :fluview])
+        @test Set(cat.fetch_with) == Set([:fetch_covidcast, :fetch_fluview])
+        @test length(t.calls) == 1
+        @test startswith(only(t.calls), COVIDCAST_META_ENDPOINT)
+        @test occursin("format=csv", only(t.calls))
+        @test !occursin("api_key", only(t.calls))
+    end
+
+    @testset "a geo_type filter narrows the result, not the request" begin
+        t = mock_for_catalog(fixture("covidcast_meta_success.csv"); geo_type = "nation")
+        cat = catalog(; transport = t, geo_type = "nation")
+
+        @test all(==(NATION), cat.geo_level)
+        # 2 covidcast nation rows (chng, nssp) + 11 fluview measures at NATION.
+        @test length(cat) == 13
+        @test !occursin("geo_types", only(t.calls))
+
+        # The alias has to select the same level. That it cannot go on the wire is the
+        # whole reason this filter runs here.
+        t2 = mock_for_catalog(fixture("covidcast_meta_success.csv"); geo_type = "hhs_region")
+        @test Set(catalog(; transport = t2, geo_type = "hhs_region").geo_level) ==
+              Set([HHS_REGION])
+    end
+
+    @testset "a time_type filter reaches the wire and the result" begin
+        t = mock_for_catalog(fixture("covidcast_meta_success.csv"); time_type = "day")
+        cat = catalog(; transport = t, time_type = "day")
+
+        @test occursin("time_types=day", only(t.calls))
+        @test all(==(:day), cat.time_type)
+        # Every fluview signal is weekly, so a day filter removes that half entirely.
+        @test :fluview ∉ cat.source
+        @test length(cat) == 6
+    end
+
+    @testset "a signal without a source is filtered locally" begin
+        t = mock_for_catalog(fixture("covidcast_meta_success.csv"); signal = "wili")
+        cat = catalog(; transport = t, signal = "wili")
+
+        @test !occursin("signals", only(t.calls))
+        @test all(==(:wili), cat.signal)
+        @test length(cat) == length(FLUVIEW_GEO_LEVELS)
+    end
+
+    @testset "asking only for fluview makes no request" begin
+        # covidcast_meta has no `fluview` data_source, so the reply is certain to be empty.
+        # Sending it would spend one of 60 per hour to learn nothing.
+        t = MockTransport()
+        cat = catalog(; transport = t, source = "fluview")
+
+        @test isempty(t.calls)
+        @test length(cat) == 44
+        @test all(==(:fluview), cat.source)
+    end
+
+    @testset "an empty covidcast half does not hide the fluview half" begin
+        # census_division exists in fluview and not in covidcast_meta, so upstream answers
+        # with an empty body. Whether the query found nothing is decided after both halves.
+        t = mock_for_catalog(fixture("covidcast_noresults.csv"); geo_type = "census_division")
+        cat = catalog(; transport = t, geo_type = "census_division")
+
+        @test length(cat) == length(FLUVIEW_MEASURES)
+        @test all(==(CENSUS_DIVISION), cat.geo_level)
+    end
+
+    @testset "nothing anywhere is still an error" begin
+        t = mock_for_catalog(fixture("covidcast_noresults.csv");
+                             source = "nssp", signal = "no_such_signal")
+        @test_throws NoResultsError catalog(; transport = t,
+                                            source = "nssp", signal = "no_such_signal")
+    end
+
+    @testset "a misspelled filter costs no request" begin
+        t = MockTransport()
+        @test_throws ValidationError catalog(; transport = t, geo_type = "planet")
+        @test_throws ValidationError catalog(; transport = t, time_type = "year")
+        @test isempty(t.calls)
+    end
+
+    @testset "errors propagate from the decode layer" begin
+        # Each is a distinct upstream failure mode, and each has to survive the trip out
+        # through catalog rather than being swallowed by the empty-half handling.
+        @test_throws EpidataError catalog(;
+            transport = mock_for_catalog(fixture("covidcast_validation_error.json");
+                                         status = 400))
+        @test_throws TruncatedResultsError catalog(;
+            transport = mock_for_catalog(fixture("covidcast_truncated.json")))
+        @test_throws TransportError catalog(;
+            transport = mock_for_catalog("<html>gateway</html>"; status = 502))
     end
 end
