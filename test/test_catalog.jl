@@ -1,4 +1,5 @@
 using Dates
+using Logging
 using EpiDataKit: empty_catalog, DelphiCovidcastMeta, COVIDCAST_META_ENDPOINT,
                   COVIDCAST_META_CSV_HEADER, csv_header, endpoint, catalog_params,
                   catalog_entries, coerce_int, decode_response, mock_response,
@@ -168,5 +169,39 @@ using EpiDataKit: empty_catalog, DelphiCovidcastMeta, COVIDCAST_META_ENDPOINT,
             @test lvl in FLUVIEW_GEO_LEVELS
         end
         @test length(FLUVIEW_GEO_LEVELS) == 4
+    end
+
+    @testset "a geo_type this version does not know drops one row, not the catalog" begin
+        # Delphi added hsa_nci to this endpoint before GEO_TYPE_MAP had it. catalog is the
+        # function you would call to discover a new level, so it cannot be the one that
+        # throws on it.
+        body = COVIDCAST_META_CSV_HEADER * "\n" *
+            "nssp,pct_ed_visits_covid,week,state,202239,202632,51,0.0,6.14,1.1,0.95,1787169386,202633,1,203\n" *
+            "nssp,pct_ed_visits_covid,week,orbital_ring,202239,202632,7,0.0,6.14,1.1,0.95,1787169386,202633,1,203\n"
+        src = DelphiCovidcastMeta()
+
+        cat = with_logger(NullLogger()) do
+            catalog_entries(decode_response(src, mock_response(body)))
+        end
+        @test length(cat) == 1
+        @test cat.geo_level == [STATE]
+
+        # The drop is reported, so it cannot pass for data that was never there.
+        @test_logs (:warn,) match_mode = :any catalog_entries(
+            decode_response(src, mock_response(body)))
+    end
+
+    @testset "an all-unknown payload is an empty catalog, not an error" begin
+        body = COVIDCAST_META_CSV_HEADER * "\n" *
+            "nssp,pct_ed_visits_covid,week,orbital_ring,202239,202632,7,0.0,6.14,1.1,0.95,1787169386,202633,1,203\n"
+        src = DelphiCovidcastMeta()
+
+        cat = with_logger(NullLogger()) do
+            catalog_entries(decode_response(src, mock_response(body)))
+        end
+        @test isempty(cat)
+        # The vcat in `catalog` needs matching column types, so an empty result has to keep
+        # them rather than collapse to Any.
+        @test eltype(cat.first_period) == Union{Date,Missing}
     end
 end
