@@ -17,7 +17,7 @@ The two enum columns land on disk as `int8` carrying no Julia-specific extension
 so the file is readable by anything that speaks Arrow without needing this package. See
 `test/portability_check/`.
 """
-function save(tbl, path::AbstractString; compress::Union{Symbol,Nothing} = nothing)
+function save(tbl::EpiTable, path::AbstractString; compress::Union{Symbol,Nothing} = nothing)
     cols = Tables.columntable(tbl)
     encoded = NamedTuple{keys(cols)}(
         ntuple(i -> keys(cols)[i] in DICT_ENCODED_COLUMNS ?

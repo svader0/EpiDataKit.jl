@@ -93,6 +93,14 @@ using Tables
         tbl = decode_response(src, mock_response(COVIDCAST_CSV_HEADER * "\n"))
         @test isempty(collect(Tables.rows(tbl)))
     end
+
+    @testset "a county geo_value survives CSV parsing as a string" begin
+        # `validate = false` means a typo in the `types` dict would go unreported.
+        body = COVIDCAST_CSV_HEADER * "\n" *
+            "06075,pct_ed_visits_covid,nssp,county,week,202620,,202633,1,0,0,0,0.07,,\n"
+        raw = decode_response(DelphiCovidcast(), mock_response(body))
+        @test Tables.getcolumn(first(Tables.rows(raw)), :geo_value) === "06075"
+    end
 end
 
 @testset "check_result" begin
