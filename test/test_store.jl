@@ -107,8 +107,8 @@ end
     end
 
     @testset "save rejects anything that is not an EpiTable" begin
-        # CatalogTable is a StructArray too, but a different schema: writing one through
-        # this path would produce a valid Arrow file that load then refuses to read back.
+        # A CatalogTable is a StructArray too, so without the type bound this would write
+        # a file `load` then refuses.
         mktempdir() do dir
             @test_throws MethodError save(CatalogTable(CatalogEntry[]),
                                            joinpath(dir, "cat.arrow"))
