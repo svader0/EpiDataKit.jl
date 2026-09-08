@@ -318,6 +318,10 @@ end
             @test only(t).ci_upper === missing
             @test only(t).value ≈ 0.07
         end
+
+        s = EpiDataKit.scan(path)
+        @test_throws BoundsError s.fill_method[2]
+        @test_throws BoundsError s.ci_lower[0]
     end
 
     @testset "a file missing a v1 column is still rejected" begin

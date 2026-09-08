@@ -186,7 +186,10 @@ struct ConstView{T} <: AbstractVector{T}
 end
 Base.size(v::ConstView) = (v.len,)
 Base.IndexStyle(::Type{<:ConstView}) = IndexLinear()
-Base.@propagate_inbounds Base.getindex(v::ConstView, ::Int) = v.value
+Base.@propagate_inbounds function Base.getindex(v::ConstView, i::Int)
+    @boundscheck checkbounds(v, i)
+    return v.value
+end
 
 _const_missing(n::Int) = ConstView{Union{Float64,Missing}}(missing, n)
 
