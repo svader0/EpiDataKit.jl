@@ -2,7 +2,7 @@ using Dates
 using Logging
 using EpiDataKit: fetch_snapshot, fetch_archive, fetch_epidata, v5_params, request_key,
                   mock_response, V5_KEY_HEADER, V5_SNAPSHOT_ENDPOINT, V5_ARCHIVE_ENDPOINT,
-                  NoResultsError, ValidationError, TransportError
+                  NoResultsError, ValidationError, TransportError, EpidataError
 
 # Build a MockTransport that answers exactly the request the fetcher should make.
 # `fetch_archive` adds use_pagination=true, so archive mocks pass it in `extra`.
@@ -214,4 +214,49 @@ end
     @test_throws ValidationError fetch_epidata(source = "nssp", signal = "x",
         geo_type = "state", snapshot_date = Date(2026, 7, 1),
         report_time = Date(2026, 6, 26), transport = MockTransport())
+end
+
+@testset "recorded V5 responses" begin
+    @testset "snapshot" begin
+        q = (source = "nssp", signal = "pct_ed_visits_covid", geo_type = "state")
+        t = v5_mock(V5_SNAPSHOT_ENDPOINT, fixture("v5_snapshot_success.csv"); q...)
+        tbl = fetch_snapshot(; transport = t, q...)
+
+        @test tbl isa EpiTable
+        @test !isempty(tbl)
+        @test all(o -> o.source === :nssp, tbl)
+        @test all(o -> o.geo_level == STATE, tbl)
+        # nssp is weekly. If this fails, infer_time_type read the recorded spacing wrong.
+        @test all(o -> o.period_end - o.period_start == Day(6), tbl)
+        @test all(o -> dayofweek(o.period_end) == 6, tbl)
+        @test all(o -> o.fill_method === :source, tbl)
+        @test all(o -> o.stderr === missing, tbl)
+    end
+
+    @testset "no rows" begin
+        q = (source = "nssp", signal = "pct_ed_visits_covid", geo_type = "state")
+        t = v5_mock(V5_SNAPSHOT_ENDPOINT, fixture("v5_snapshot_noresults.csv"); q...)
+        @test_throws NoResultsError fetch_snapshot(; transport = t, q...)
+    end
+
+    @testset "ci columns" begin
+        q = (source = "sleepcycle", signal = "pct_cough_2_plus_7dav", geo_type = "state")
+        t = v5_mock(V5_SNAPSHOT_ENDPOINT, fixture("v5_snapshot_ci.csv"); q...)
+        tbl = fetch_snapshot(; transport = t, q...)
+
+        @test any(o -> o.ci_lower !== missing, tbl)
+        @test all(o -> o.ci_lower === missing || o.ci_lower <= o.value <= o.ci_upper, tbl)
+        # sleepcycle is daily.
+        @test all(o -> o.period_start == o.period_end, tbl)
+    end
+
+    @testset "422" begin
+        q = (source = "nssp", signal = "pct_ed_visits_covid", geo_type = "state")
+        t = v5_mock(V5_SNAPSHOT_ENDPOINT, fixture("v5_validation_error.json");
+                    status = 422, q...)
+        e = try; fetch_snapshot(; transport = t, q...); nothing; catch err; err; end
+        @test e isa EpidataError
+        @test e.code == 422
+        @test !isempty(e.message)
+    end
 end

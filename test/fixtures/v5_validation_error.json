@@ -1,0 +1,1 @@
+{"detail":[{"type":"value_error","loc":["query"],"msg":"Value error, signal is required. Discover available values: /epidata/v5/signals/?source=nssp","input":{"source":"nssp","limit":-1,"format":"csv","header":true},"ctx":{"error":{}}}]}

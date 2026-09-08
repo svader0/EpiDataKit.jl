@@ -29,7 +29,10 @@ using EpiDataKit
 using EpiDataKit: HTTPTransport, fetch_raw, decode_response, standardize, body_string,
                   ratelimit, DelphiCovidcast, COVIDCAST_CSV_HEADER, COVIDCAST_ENDPOINT,
                   DelphiFluView, FLUVIEW_ENDPOINT, FLUVIEW_MEASURES,
-                  COVIDCAST_META_ENDPOINT, COVIDCAST_META_CSV_HEADER
+                  COVIDCAST_META_ENDPOINT, COVIDCAST_META_CSV_HEADER,
+                  v5_transport, decode_v5, v5_error_message, V5_KEY_HEADER,
+                  V5_SNAPSHOT_ENDPOINT, V5_ARCHIVE_ENDPOINT, V5_METADATA_ENDPOINT,
+                  V5_SOURCES, fetch_snapshot, fetch_archive, DelphiV5, next_link
 
 using JSON3
 
@@ -209,18 +212,151 @@ const CHECKS = [
     ),
 ]
 
-function main()
-    transport = HTTPTransport()
-    if transport.api_key === nothing
-        @info "No DELPHI_EPIDATA_KEY set; using the anonymous 60 requests/hour limit."
-    end
+# The V5 API is a different host with a different failure protocol, so its contracts get
+# their own transport and their own list. Rate limits are tighter here: 3 requests/minute
+# on snapshot and 5 on archive, so this list stays short on purpose.
+const CHECKS_V5 = [
+    (
+        name = "v5 snapshot success",
+        endpoint = V5_SNAPSHOT_ENDPOINT,
+        fixture = "v5_snapshot_success.csv",
+        params = Dict("source" => "nssp", "signal" => "pct_ed_visits_covid",
+                      "geo_type" => "state", "limit" => "20", "format" => "csv"),
+        check = function (resp)
+            problems = String[]
+            resp.status == 200 || push!(problems, "expected status 200, got $(resp.status)")
+            body = strip(body_string(resp))
+            lines = split(body, '\n')
+            if isempty(body)
+                push!(problems, "expected a CSV body, got an empty one")
+                return problems
+            end
+            # decode_v5 gates a 200 body on this prefix.
+            startswith(strip(lines[1]), V5_KEY_HEADER) ||
+                push!(problems, "key header changed\n      expected prefix: $V5_KEY_HEADER\n      got: $(strip(lines[1]))")
+            length(lines) >= 2 || push!(problems, "expected at least one data row, got header only")
+            # nssp is weekly, and every weekly reference_time observed is a Saturday.
+            if length(lines) >= 2
+                cols = split(strip(lines[2]), ',')
+                length(cols) >= 6 || push!(problems, "row has fewer than 6 key columns")
+                if length(cols) >= 6
+                    d = tryparse(Date, cols[6])
+                    d === nothing ? push!(problems, "reference_time $(cols[6]) is not YYYY-MM-DD") :
+                        (dayofweek(d) == 6 ||
+                         push!(problems, "weekly reference_time $d is not a Saturday"))
+                end
+            end
+            return problems
+        end,
+    ),
+    (
+        name = "v5 no rows is header only",
+        endpoint = V5_SNAPSHOT_ENDPOINT,
+        fixture = "v5_snapshot_noresults.csv",
+        params = Dict("source" => "nssp", "signal" => "not_a_signal",
+                      "geo_type" => "state", "format" => "csv"),
+        check = function (resp)
+            problems = String[]
+            # The whole no-rows contract: a 200 whose body is the header and nothing else.
+            # If this ever becomes an error status or an empty body, decode_v5's last two
+            # branches are wrong.
+            resp.status == 200 || push!(problems, "expected status 200, got $(resp.status)")
+            body = strip(body_string(resp))
+            startswith(body, V5_KEY_HEADER) ||
+                push!(problems, "expected the key header, got $(first(body, 100))")
+            occursin('\n', body) &&
+                push!(problems, "expected header only; got $(count(==('\n'), body) + 1) lines")
+            return problems
+        end,
+    ),
+    (
+        name = "v5 ci columns",
+        endpoint = V5_SNAPSHOT_ENDPOINT,
+        fixture = "v5_snapshot_ci.csv",
+        params = Dict("source" => "sleepcycle", "signal" => "pct_cough_2_plus_7dav",
+                      "geo_type" => "state", "limit" => "20", "format" => "csv"),
+        check = function (resp)
+            problems = String[]
+            resp.status == 200 || push!(problems, "expected status 200, got $(resp.status)")
+            header = strip(first(split(strip(body_string(resp)), '\n')))
+            startswith(header, V5_KEY_HEADER) ||
+                push!(problems, "key header changed: $header")
+            for c in ("ci_lower", "ci_upper", "value")
+                occursin(c, header) || push!(problems, "header has no `$c` column: $header")
+            end
+            return problems
+        end,
+    ),
+    (
+        name = "v5 archive success",
+        endpoint = V5_ARCHIVE_ENDPOINT,
+        fixture = "v5_archive_success.csv",
+        params = Dict("source" => "nssp", "signal" => "pct_ed_visits_covid",
+                      "geo_type" => "state", "limit" => "20", "format" => "csv",
+                      "use_pagination" => "true"),
+        check = function (resp)
+            problems = String[]
+            resp.status == 200 || push!(problems, "expected status 200, got $(resp.status)")
+            startswith(strip(body_string(resp)), V5_KEY_HEADER) ||
+                push!(problems, "key header changed")
+            # Pagination is how fetch_archive avoids an unbounded body.
+            next_link(resp) === nothing &&
+                push!(problems, "use_pagination=true produced no `Link: rel=next` header")
+            return problems
+        end,
+    ),
+    (
+        name = "v5 validation error (422)",
+        endpoint = V5_SNAPSHOT_ENDPOINT,
+        fixture = "v5_validation_error.json",
+        params = Dict("source" => "nssp", "format" => "csv"),
+        check = function (resp)
+            problems = String[]
+            resp.status == 422 || push!(problems, "expected status 422, got $(resp.status)")
+            msg = v5_error_message(body_string(resp))
+            msg === nothing && push!(problems, "body is not a FastAPI `detail` array")
+            return problems
+        end,
+    ),
+    (
+        name = "v5 metadata",
+        endpoint = V5_METADATA_ENDPOINT,
+        fixture = "v5_metadata.json",
+        params = Dict{String,String}(),
+        check = function (resp)
+            problems = String[]
+            resp.status == 200 || push!(problems, "expected status 200, got $(resp.status)")
+            obj = try
+                JSON3.read(body_string(resp))
+            catch
+                push!(problems, "expected JSON; got non-JSON")
+                return problems
+            end
+            for s in V5_SOURCES
+                haskey(obj, s) || push!(problems, "metadata/ no longer lists `$s`")
+            end
+            if haskey(obj, :nssp)
+                for f in (:signals, :geo_types, :reference_time_range, :report_time_range)
+                    haskey(obj.nssp, f) ||
+                        push!(problems, "nssp metadata is missing the `$f` field")
+                end
+                # A source gaining extra key columns means its rows no longer fit the schema.
+                ek = get(obj.nssp, :extra_key_columns, nothing)
+                ek === nothing || isempty(ek) ||
+                    push!(problems, "nssp gained extra key columns: $ek")
+            end
+            return problems
+        end,
+    ),
+]
 
+function run_checks(checks, transport, label; pause::Real = 0)
     failed = 0
     last_resp = nothing
+    println("Checking ", length(checks), " upstream contracts against ", label, "\n")
 
-    println("Checking ", length(CHECKS), " upstream contracts against api.delphi.cmu.edu\n")
-
-    for c in CHECKS
+    for (i, c) in enumerate(checks)
+        i > 1 && sleep(pause)
         print("  ", rpad(c.name, 34))
         resp = try
             fetch_raw(transport, c.endpoint, c.params)
@@ -258,6 +394,21 @@ function main()
             end
         end
     end
+    return (failed, last_resp)
+end
+
+function main()
+    transport = HTTPTransport()
+    if transport.api_key === nothing
+        @info "No DELPHI_EPIDATA_KEY set; using the anonymous 60 requests/hour limit."
+    end
+
+    failed, last_resp = run_checks(CHECKS, transport, "api.delphi.cmu.edu")
+
+    v5 = v5_transport()
+    # 3 requests/minute on snapshot, so pace the V5 half rather than racing it.
+    v5_failed, _ = run_checks(CHECKS_V5, v5, "delphi.cmu.edu/epidata/v5"; pause = 21)
+    failed += v5_failed
 
     # End-to-end through the public entry point. This is the only exercise the real
     # HTTPTransport fetch path gets anywhere in the repo; the offline suite substitutes
@@ -327,6 +478,54 @@ function main()
         failed += 1
     end
 
+    print("  ", rpad("fetch_snapshot end to end", 34))
+    try
+        sleep(21)  # stay under the 3 requests/minute snapshot limit
+        tbl = fetch_snapshot(source = "nssp", signal = "pct_ed_visits_covid",
+                             geo_type = "state", geo_values = "ca",
+                             reference_time = Date(2026, 1, 1):Date(2026, 6, 1))
+        if length(tbl) == 0
+            println("DRIFT")
+            println("      returned zero rows for a window that previously had data")
+            failed += 1
+        else
+            bad = filter(o -> o.period_end - o.period_start != Day(6), collect(tbl))
+            if !isempty(bad)
+                println("DRIFT")
+                println("      $(length(bad)) nssp rows are not 7-day spans; ",
+                        "infer_time_type read the resolution wrong")
+                failed += 1
+            elseif any(o -> o.geo_id != "ca", tbl)
+                println("DRIFT")
+                println("      the client-side geo_values filter let another state through")
+                failed += 1
+            else
+                println("ok (", length(tbl), " rows)")
+            end
+        end
+    catch e
+        println("ERROR")
+        println("      ", sprint(showerror, e))
+        failed += 1
+    end
+
+    print("  ", rpad("catalog(api = :v5) end to end", 34))
+    try
+        cat = catalog(api = :v5)
+        if length(cat) == 0
+            println("DRIFT")
+            println("      returned zero entries")
+            failed += 1
+        else
+            println("ok (", length(cat), " entries, ",
+                    length(unique(cat.source)), " sources)")
+        end
+    catch e
+        println("ERROR")
+        println("      ", sprint(showerror, e))
+        failed += 1
+    end
+
     if last_resp !== nothing
         rl = ratelimit(last_resp)
         rl.remaining === nothing ||
@@ -350,6 +549,9 @@ function main()
     println("  3. If the covidcast_meta header changed, update COVIDCAST_META_CSV_HEADER in src/catalog.jl.")
     println("  4. If a status or result code changed, update decode_response and its tests.")
     println("  5. Run the offline suite: julia --project=. -e 'using Pkg; Pkg.test()'")
+    println("  6. If the V5 key header changed, update V5_KEY_HEADER in src/sources/v5.jl.")
+    println("  7. If a V5 source appeared or gained extra key columns, update V5_SOURCES")
+    println("     and V5_UNSUPPORTED_SOURCES in src/sources/v5.jl.")
     return 1
 end
 
