@@ -118,4 +118,13 @@ end
         tbl2 = standardize(DelphiV5(:nssp), decode_v5(mock_response(body)))
         @test tbl2[1].period_start == Date(2022, 10, 1)
     end
+
+    @testset "a row with no report_time has a missing issue and lag" begin
+        body = V5_KEY_HEADER * ",value\n" *
+               "pct_ed_visits_covid,,state,ak,source,2022-10-01,1.61\n" *
+               "pct_ed_visits_covid,,state,ak,source,2022-10-08,1.31\n"
+        tbl = standardize(DelphiV5(:nssp), decode_v5(mock_response(body)))
+        @test tbl[1].issue === missing
+        @test tbl[1].lag === missing
+    end
 end

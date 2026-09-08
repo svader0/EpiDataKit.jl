@@ -166,8 +166,6 @@ function standardize(src::DelphiV5, raw; time_type = nothing)
     return StructArray{EpiObservation}(c)
 end
 
-# V5 dropped `lag`. The migration guide says to derive it from report_time - reference_time,
-# and this schema counts it in the signal's own units.
 function _v5_lag(time_type::Symbol, period_end, issue)
     issue === missing && return missing
     days = Dates.value(issue - period_end)
