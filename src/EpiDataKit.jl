@@ -46,6 +46,7 @@ include("geo.jl")
 include("transport.jl")
 include("standardize.jl")
 include("sources/delphi.jl")
+include("sources/v5.jl")
 include("catalog.jl")
 include("store.jl")
 
@@ -56,7 +57,7 @@ export CENSUS_REGION, SEWERSHED, VA_FACILITY
 export NOT_MISSING, NOT_APPLICABLE, REGION_EXCEPTION, CENSORED, DELETED, OTHER
 
 # Sources and fetching
-export AbstractSource, DelphiCovidcast, DelphiFluView, DelphiCovidcastMeta
+export AbstractSource, DelphiCovidcast, DelphiFluView, DelphiCovidcastMeta, DelphiV5
 export AbstractTransport, HTTPTransport, MockTransport, v5_transport
 export fetch_covidcast, fetch_fluview, standardize
 

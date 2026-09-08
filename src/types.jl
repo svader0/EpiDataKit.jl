@@ -162,6 +162,19 @@ describing coverage rather than measurements. Read by [`catalog`](@ref).
 """
 struct DelphiCovidcastMeta <: AbstractSource end
 
+"""
+    DelphiV5(source)
+
+A source served by the Epidata V5 API, named by its V5 `source` parameter, such as
+`DelphiV5(:nssp)`.
+
+V5 responses carry no `source` column, because the source is a request parameter. The tag
+therefore has to carry it so [`standardize`](@ref) can put it back on every row.
+"""
+struct DelphiV5 <: AbstractSource
+    source::Symbol
+end
+
 # --------------------------------------------------
 #                   CATALOG SCHEMA
 # --------------------------------------------------
