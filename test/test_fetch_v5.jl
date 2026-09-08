@@ -2,7 +2,7 @@ using Dates
 using Logging
 using EpiDataKit: fetch_snapshot, fetch_archive, fetch_epidata, v5_params, request_key,
                   mock_response, V5_KEY_HEADER, V5_SNAPSHOT_ENDPOINT, V5_ARCHIVE_ENDPOINT,
-                  NoResultsError, ValidationError
+                  NoResultsError, ValidationError, TransportError
 
 # Build a MockTransport that answers exactly the request the fetcher should make.
 # `fetch_archive` adds use_pagination=true, so archive mocks pass it in `extra`.
@@ -106,6 +106,22 @@ const SNAP_Q = (source = "nssp", signal = "pct_ed_visits_covid", geo_type = "sta
             transport = t2, as_of = Date(2026, 7, 1), SNAP_Q...)
         @test length(tbl2) == 4
     end
+
+    @testset "one empty signal among several is skipped, not fatal" begin
+        b1 = V5_KEY_HEADER * ",value\n" *
+             "pct_ed_visits_covid,2026-06-26,state,ca,source,2022-10-01,2.10\n"
+        k1 = request_key(V5_SNAPSHOT_ENDPOINT,
+                         v5_params(source = "nssp", signal = "pct_ed_visits_covid", geo_type = "state"))
+        k2 = request_key(V5_SNAPSHOT_ENDPOINT,
+                         v5_params(source = "nssp", signal = "pct_ed_visits_rsv", geo_type = "state"))
+        t = MockTransport(Dict(k1 => mock_response(b1; request = k1),
+                               k2 => mock_response(V5_KEY_HEADER * ",value\n"; request = k2)))
+        tbl = fetch_snapshot(source = "nssp", geo_type = "state", transport = t,
+                             signal = ["pct_ed_visits_covid", "pct_ed_visits_rsv"])
+        @test length(t.calls) == 2
+        @test length(tbl) == 1
+        @test only(tbl).signal === :pct_ed_visits_covid
+    end
 end
 
 @testset "fetch_archive" begin
@@ -150,6 +166,35 @@ end
 
         tbl = fetch_archive(; transport = t, q...)
         @test length(t.calls) == 2
+        @test length(tbl) == 2
+        @test Set(tbl.issue) == Set([Date(2026, 6, 26), Date(2026, 7, 1)])
+    end
+
+    @testset "a failed later page is an error, not data" begin
+        page1 = V5_KEY_HEADER * ",value\n" *
+                "pct_ed_visits_covid,2026-06-26,state,ca,source,2022-10-01,2.10\n"
+        key = request_key(V5_ARCHIVE_ENDPOINT, merge(v5_params(; q...), PAGINATED))
+        nxt = "https://delphi.cmu.edu/epidata/v5/archive/?page=2&header=false"
+        nxt_key = request_key(nxt, Dict{String,String}())
+        t = MockTransport(Dict(
+            key => mock_response(page1; headers = Dict("Link" => "<$nxt>; rel=\"next\""),
+                                 request = key),
+            nxt_key => mock_response("<html>502</html>"; status = 502, request = nxt_key)))
+        @test_throws TransportError fetch_archive(; transport = t, q...)
+    end
+
+    @testset "a page without a trailing newline does not glue rows together" begin
+        page1 = V5_KEY_HEADER * ",value\n" *
+                "pct_ed_visits_covid,2026-06-26,state,ca,source,2022-10-01,2.10"
+        page2 = "pct_ed_visits_covid,2026-07-01,state,ca,source,2022-10-01,2.15\n"
+        key = request_key(V5_ARCHIVE_ENDPOINT, merge(v5_params(; q...), PAGINATED))
+        nxt = "https://delphi.cmu.edu/epidata/v5/archive/?page=2&header=false"
+        nxt_key = request_key(nxt, Dict{String,String}())
+        t = MockTransport(Dict(
+            key => mock_response(page1; headers = Dict("Link" => "<$nxt>; rel=\"next\""),
+                                 request = key),
+            nxt_key => mock_response(page2; request = nxt_key)))
+        tbl = fetch_archive(; transport = t, q...)
         @test length(tbl) == 2
         @test Set(tbl.issue) == Set([Date(2026, 6, 26), Date(2026, 7, 1)])
     end

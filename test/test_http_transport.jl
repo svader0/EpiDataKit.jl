@@ -189,6 +189,15 @@ using EpiDataKit: HTTPTransport, fetch_raw, ratelimit, body_string, TransportErr
             # The key must never reach the query string.
             @test !occursin("sekrit", split(body, '\n')[1])
         end
+
+        @testset "absolute endpoints stay on the base host" begin
+            t = HTTPTransport(base_url = base, api_key = "sekrit", auth = :token, max_retries = 0)
+            # Same host: followed, and the token still travels.
+            body = body_string(fetch_raw(t, "$base/echo", Dict("a" => "1")))
+            @test occursin("token=sekrit", body)
+            # Another host never sees the key.
+            @test_throws TransportError fetch_raw(t, "http://evil.example/echo", Dict{String,String}())
+        end
     finally
         close(server)
     end

@@ -209,9 +209,21 @@ function _warn_low_quota(resp::EpiResponse)
     return nothing
 end
 
+# A paginated `Link` header names an absolute URL. The key travels only to the base URL's
+# own host, on the base URL's own scheme, so a cleartext or off-host link cannot carry it.
+function _same_host_url(t::HTTPTransport, url::AbstractString)
+    base = HTTP.URI(t.base_url)
+    u = HTTP.URI(url)
+    u.host == base.host || throw(TransportError(url, 0,
+        "refusing to follow a link to $(u.host); this transport talks to $(base.host)"))
+    port = isempty(base.port) ? "" : string(":", base.port)
+    query = isempty(u.query) ? "" : string("?", u.query)
+    return string(base.scheme, "://", base.host, port, u.path, query)
+end
+
 function fetch_raw(t::HTTPTransport, endpoint::AbstractString, params)
     key = request_key(endpoint, params)
-    url = startswith(endpoint, "http") ? String(endpoint) :
+    url = startswith(endpoint, "http") ? _same_host_url(t, endpoint) :
           string(rstrip(t.base_url, '/'), "/", lstrip(endpoint, '/'))
     headers = auth_headers(t)
     local last_resp::Union{EpiResponse,Nothing} = nothing

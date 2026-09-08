@@ -366,12 +366,13 @@ function _fetch_v5_body(transport, endpoint, params, paginate::Bool)
         url = next_link(resp)
         while url !== nothing
             r = fetch_raw(transport, url, Dict{String,String}())
+            200 <= r.status < 300 || throw(TransportError(url, r.status, body_string(r)))
             push!(pages, r)
             url = next_link(r)
         end
     end
     length(pages) == 1 && return resp
-    joined = join((body_string(p) for p in pages), "")
+    joined = join((let s = body_string(p); endswith(s, '\n') ? s : s * '\n' end for p in pages), "")
     return EpiResponse(resp.status, Vector{UInt8}(codeunits(joined)), resp.headers,
                        resp.request)
 end
@@ -403,7 +404,7 @@ function _fetch_v5(endpoint, transport, signal, time_type, filters; params...)
     return out
 end
 
-# Accept the V4 spellings epidatr also keeps, and say so once.
+# Accept the V4 spellings epidatr also keeps.
 function _deprecated(new_name::String, old_name::String, old_value, new_value)
     old_value === nothing && return new_value
     @warn "`$old_name` is the V4 name; V5 calls it `$new_name`"
