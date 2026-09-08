@@ -302,20 +302,26 @@ const V5_FILL_ALIASES = Dict(:fill_ave => :ave, :fill_zero => :zero, :source => 
 _match_geo(::Nothing, _) = true
 _match_geo(want::Set{String}, id::AbstractString) = id in want
 
-_geo_set(g) = g isa AbstractString ? (strip(g) == "*" ? nothing : Set([lowercase(strip(g))])) :
-              Set(lowercase(strip(string(x))) for x in g)
+_geo_set(g::AbstractString) = strip(g) == "*" ? nothing : Set([lowercase(strip(g))])
+_geo_set(g::Symbol) = _geo_set(String(g))
+_geo_set(g) = Set(lowercase(strip(string(x))) for x in g)
 
 _match_time(::Nothing, _) = true
 _match_time(want::AbstractRange{Date}, d::Date) = first(want) <= d <= last(want)
 _match_time(want::Set{Date}, d::Date) = d in want
 
+_ref_date(x::Date) = x
+_ref_date(x) = Date(_v5_date(string(x)), dateformat"yyyy-mm-dd")
+
 function _time_pred(rt)
     rt isa AbstractString && strip(rt) == "*" && return nothing
     rt isa Date && return Set([rt])
-    rt isa AbstractRange && eltype(rt) <: Date && return rt
-    rt isa AbstractString && return Set([Date(strip(rt), dateformat"yyyy-mm-dd")])
-    (rt isa AbstractVector || rt isa Tuple) &&
-        return Set(x isa Date ? x : Date(strip(string(x)), dateformat"yyyy-mm-dd") for x in rt)
+    if rt isa AbstractRange
+        eltype(rt) <: Date && return rt
+        throw(ValidationError("reference_time range must hold Dates, got $(typeof(rt))"))
+    end
+    rt isa AbstractString && return Set([_ref_date(rt)])
+    (rt isa AbstractVector || rt isa Tuple) && return Set(_ref_date(x) for x in rt)
     throw(ValidationError("cannot interpret reference_time of type $(typeof(rt))"))
 end
 

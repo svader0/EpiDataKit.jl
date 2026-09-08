@@ -113,6 +113,17 @@ end
     # The query spelling epidatr and the OpenAPI document use maps to the column spelling.
     @test length(filter_observations(tbl; fill_method = "fill_ave")) == 1
 
+    # A Symbol is as good as a string for a location.
+    @test length(filter_observations(tbl; geo_values = :ca)) == 3
+
+    # reference_time strings go through the same strict YYYY-MM-DD check as snapshot_date.
+    @test length(filter_observations(tbl;
+        reference_time = ["2026-01-02", "2026-02-01"])) == 2
+    @test_throws ValidationError filter_observations(tbl; reference_time = "202601")
+    @test_throws ValidationError filter_observations(tbl; reference_time = ["3"])
+    # A range that does not hold Dates is a mistake, not an empty match.
+    @test_throws ValidationError filter_observations(tbl; reference_time = 1:10)
+
     @test length(filter_observations(tbl; geo_values = "ca", fill_method = :source,
                                      reference_time = Date(2026, 1, 1))) == 1
 
