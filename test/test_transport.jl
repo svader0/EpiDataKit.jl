@@ -153,4 +153,23 @@ using EpiDataKit: canonical_query, request_key, auth_headers, backoff_delay, fet
         @test HTTPTransport().base_url == DELPHI_BASE_URL
         @test endswith(DELPHI_BASE_URL, "/")
     end
+
+    @testset "v5_transport defaults" begin
+        t = EpiDataKit.v5_transport(api_key = "k")
+        @test t.base_url == EpiDataKit.DELPHI_V5_BASE_URL
+        @test t.auth === :token
+        @test EpiDataKit.HTTPTransport().auth === :basic
+        @test_throws EpiDataKit.ValidationError HTTPTransport(auth = :bearer)
+    end
+
+    @testset "next_link" begin
+        url = "http://delphi.cmu.edu/epidata/v5/archive/?source=nssp&header=false"
+        r = mock_response("x"; headers = Dict("Link" => "<$url>; rel=\"next\""))
+        @test EpiDataKit.next_link(r) == url
+
+        @test EpiDataKit.next_link(mock_response("x")) === nothing
+        # A Link header that is not a next page must not be followed.
+        @test EpiDataKit.next_link(
+            mock_response("x"; headers = Dict("Link" => "<$url>; rel=\"prev\""))) === nothing
+    end
 end

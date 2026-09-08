@@ -26,7 +26,8 @@ using EpiDataKit: HTTPTransport, fetch_raw, ratelimit, body_string, TransportErr
         elseif path == "/echo"
             # Report back exactly what arrived, so tests can assert on the wire format.
             auth = HTTP.header(req, "Authorization", "")
-            return HTTP.Response(200, "target=$(req.target)\nauth=$auth")
+            token = HTTP.header(req, "token", "")
+            return HTTP.Response(200, "target=$(req.target)\nauth=$auth\ntoken=$token")
         elseif path == "/flaky"
             # Fails twice, then succeeds; should be retried through to success.
             return hits[path] < 3 ? HTTP.Response(500, "server error") :
@@ -177,6 +178,16 @@ using EpiDataKit: HTTPTransport, fetch_raw, ratelimit, body_string, TransportErr
             resp = fetch_raw(transport(timeout = 5), "ok", Dict("a" => "1"))
             @test resp.status == 200
             @test body_string(resp) == "hello"
+        end
+
+        @testset "V5 token auth" begin
+            t = HTTPTransport(base_url = base, api_key = "sekrit", auth = :token, max_retries = 0)
+            body = body_string(fetch_raw(t, "echo", Dict("a" => "1")))
+
+            @test occursin("token=sekrit", body) || occursin("token: sekrit", body)
+            @test !occursin("Basic", body)
+            # The key must never reach the query string.
+            @test !occursin("sekrit", split(body, '\n')[1])
         end
     finally
         close(server)

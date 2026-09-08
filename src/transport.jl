@@ -54,6 +54,21 @@ function ratelimit(r::EpiResponse)
 end
 
 """
+    next_link(r::EpiResponse) -> Union{String,Nothing}
+
+The `rel="next"` URL of a paginated V5 response, or `nothing` when there is no next page.
+
+V5 paginates with an RFC 8288 `Link` header rather than a cursor in the body, and the URL
+it hands back already carries `header=false`, so pages concatenate as raw CSV.
+"""
+function next_link(r::EpiResponse)
+    raw = get(r.headers, "link", nothing)
+    raw === nothing && return nothing
+    m = match(r"<([^>]+)>\s*;\s*rel\s*=\s*\"?next\"?", raw)
+    return m === nothing ? nothing : String(m.captures[1])
+end
+
+"""
     canonical_query(params) -> String
 
 Render query parameters in a stable order.
@@ -86,13 +101,21 @@ abstract type AbstractTransport end
 const DELPHI_BASE_URL = "https://api.delphi.cmu.edu/epidata/"
 
 """
+Base URL of the Epidata V5 API. A different host from [`DELPHI_BASE_URL`](@ref): the V5
+routes do not exist on `api.delphi.cmu.edu`, which answers them with a 404.
+"""
+const DELPHI_V5_BASE_URL = "https://delphi.cmu.edu/epidata/v5/"
+
+"""
     HTTPTransport(; base_url, api_key, max_retries, base_delay, max_delay, timeout)
 
 Talks to the real API.
 
-The API key defaults to `ENV["DELPHI_EPIDATA_KEY"]` and is sent as HTTP Basic auth
-(`epidata:<key>`) rather than as a query parameter, so it cannot leak through access
-logs, `Referer` headers, or an exception that quotes the URL.
+The API key defaults to `ENV["DELPHI_EPIDATA_KEY"]`. V3 and V4 take it as HTTP Basic auth
+(`epidata:<key>`); V5 takes it in a `token` header. Pick with `auth = :basic` or
+`auth = :token`, or call [`v5_transport`](@ref), which sets both. Either way the key
+travels in a header, never as a query parameter, so it cannot leak through access logs,
+`Referer` headers, or an exception that quotes the URL.
 
 Retries cover `429` and `5xx` only. A `4xx` means the request itself was wrong and will
 be exactly as wrong the second time, so retrying it just burns quota that is capped at
@@ -110,6 +133,7 @@ to responses that arrive compressed, which is what Delphi sends.
 struct HTTPTransport <: AbstractTransport
     base_url::String
     api_key::Union{String,Nothing}
+    auth::Symbol
     max_retries::Int
     base_delay::Float64
     max_delay::Float64
@@ -120,19 +144,32 @@ end
 function HTTPTransport(;
     base_url::AbstractString = DELPHI_BASE_URL,
     api_key::Union{AbstractString,Nothing} = get(ENV, "DELPHI_EPIDATA_KEY", nothing),
+    auth::Symbol = :basic,
     max_retries::Integer = 3,
     base_delay::Real = 1.0,
     max_delay::Real = 30.0,
     timeout::Integer = 60,
     max_response_bytes::Integer = 512 * 1024 * 1024,
 )
+    auth in (:basic, :token) ||
+        throw(ValidationError("auth must be :basic or :token, got $(repr(auth))"))
     key = api_key === nothing || isempty(api_key) ? nothing : string(api_key)
-    HTTPTransport(string(base_url), key, Int(max_retries), Float64(base_delay),
+    HTTPTransport(string(base_url), key, auth, Int(max_retries), Float64(base_delay),
                   Float64(max_delay), Int(timeout), Int(max_response_bytes))
 end
 
+"""
+    v5_transport(; kwargs...) -> HTTPTransport
+
+An [`HTTPTransport`](@ref) aimed at the V5 API. Same keywords as `HTTPTransport`, with
+`base_url` and `auth` already set.
+"""
+v5_transport(; base_url::AbstractString = DELPHI_V5_BASE_URL, auth::Symbol = :token,
+               kwargs...) = HTTPTransport(; base_url, auth, kwargs...)
+
 function auth_headers(t::HTTPTransport)
     t.api_key === nothing && return Pair{String,String}[]
+    t.auth === :token && return ["token" => t.api_key]
     token = base64encode(string("epidata:", t.api_key))
     return ["Authorization" => string("Basic ", token)]
 end
