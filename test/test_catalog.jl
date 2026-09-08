@@ -5,6 +5,7 @@ using EpiDataKit: empty_catalog, DelphiCovidcastMeta, COVIDCAST_META_ENDPOINT,
                   catalog_entries, coerce_int, decode_response, mock_response,
                   fluview_catalog_entries, FLUVIEW_GEO_LEVELS, FLUVIEW_MEASURES, fluview_geo,
                   catalog, request_key
+using EpiDataKit: v5_catalog_entries, V5_METADATA_ENDPOINT, V5_SOURCES
 
 function mock_for_catalog(body; status = 200, kwargs...)
     params = catalog_params(; kwargs...)
@@ -302,5 +303,51 @@ end
             transport = mock_for_catalog(fixture("covidcast_truncated.json")))
         @test_throws TransportError catalog(;
             transport = mock_for_catalog("<html>gateway</html>"; status = 502))
+    end
+
+    @testset "V5 catalog" begin
+        cat = v5_catalog_entries(fixture("v5_metadata.json"))
+
+        @test cat isa CatalogTable
+        @test !isempty(cat)
+        @test :nssp in cat.source
+        @test :pct_ed_visits_covid in cat.signal
+        @test all(e -> e.fetch_with === :fetch_snapshot, cat)
+
+        # metadata/ publishes no resolution, so this column is missing rather than guessed.
+        @test all(e -> e.time_type === missing, cat)
+        @test all(e -> e.num_locations === missing, cat)
+
+        nssp = filter(e -> e.source === :nssp, cat)
+        @test STATE in nssp.geo_level
+        @test CENSUS_REGION in nssp.geo_level
+        @test all(e -> e.first_period isa Date, nssp)
+        @test all(e -> e.last_period >= e.first_period, nssp)
+        @test all(e -> e.last_issue isa Date, nssp)
+
+        # Only the sources this package can actually fetch belong in the catalog.
+        @test all(s -> s in V5_SOURCES, unique(cat.source))
+        @test :pophive ∉ cat.source
+        @test :nwss ∉ cat.source
+        # rvdss publishes null for every field; it must be skipped, not crash the parse.
+        @test :rvdss ∉ cat.source
+
+        @testset "catalog(api = :v5) makes one request" begin
+            key = request_key(V5_METADATA_ENDPOINT, Dict{String,String}())
+            t = MockTransport(Dict(key => mock_response(fixture("v5_metadata.json");
+                                                        request = key)))
+            c = catalog(api = :v5, transport = t)
+            @test length(t.calls) == 1
+            @test :nssp in c.source
+
+            c2 = catalog(api = :v5, source = "nssp", geo_type = "state", transport = t)
+            @test all(e -> e.source === :nssp && e.geo_level == STATE, c2)
+            @test_throws NoResultsError catalog(api = :v5, source = "nssp",
+                                                signal = "nope", transport = t)
+        end
+
+        @testset "an unknown api is rejected before any request" begin
+            @test_throws ValidationError catalog(api = :v9, transport = MockTransport())
+        end
     end
 end

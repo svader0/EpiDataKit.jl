@@ -178,6 +178,81 @@ function _covidcast_catalog(transport::AbstractTransport, params)
     end
 end
 
+# ---------------------------------------------------------------------------
+# V5 metadata
+# ---------------------------------------------------------------------------
+
+"""
+    v5_catalog_entries(json) -> CatalogTable
+
+Convert a V5 `metadata/` reply into [`CatalogEntry`](@ref) rows.
+
+One request describes every source, so this is far cheaper than `covidcast_meta`. What it
+does not describe is the time resolution or the per-signal geographic coverage: `geo_types`
+is a source-wide list, so the entries are its cross product with `signals`, and `time_type`
+is `missing`.
+
+Sources this package cannot fetch are skipped rather than listed, because a catalog entry
+is a promise that [`fetch_snapshot`](@ref) accepts it. A source whose tables are still
+being rebuilt upstream reports `null` for every field and is skipped the same way.
+"""
+function v5_catalog_entries(json::AbstractString)
+    obj = try
+        JSON3.read(json)
+    catch e
+        e isa InterruptException && rethrow()
+        throw(EpidataError(V5_METADATA_ENDPOINT, nothing,
+            "metadata/ did not return JSON: " * sprint(showerror, e)))
+    end
+
+    entries = CatalogEntry[]
+    unknown = Set{String}()
+
+    for (name, meta) in pairs(obj)
+        src = Symbol(lowercase(string(name)))
+        src in V5_SOURCES || continue
+        meta isa JSON3.Object || continue
+
+        sigs = get(meta, :signals, nothing)
+        geos = get(meta, :geo_types, nothing)
+        (sigs === nothing || geos === nothing) && continue
+
+        ref = get(meta, :reference_time_range, nothing)
+        rep = get(meta, :report_time_range, nothing)
+        first_period = ref === nothing ? missing : coerce_date(get(ref, :first, missing))
+        last_period = ref === nothing ? missing : coerce_date(get(ref, :latest, missing))
+        last_issue = rep === nothing ? missing : coerce_date(get(rep, :latest, missing))
+
+        for g in geos
+            lvl = get(GEO_TYPE_MAP, lowercase(string(g)), nothing)
+            if lvl === nothing
+                push!(unknown, string(g))
+                continue
+            end
+            for s in sigs
+                push!(entries, CatalogEntry(
+                    src, Symbol(string(s)), missing, lvl,
+                    first_period, last_period, missing, last_issue, missing, missing,
+                    :fetch_snapshot))
+            end
+        end
+    end
+
+    isempty(unknown) || @warn(
+        "V5 catalog dropped a geo_type this version does not know; " *
+        "upgrade EpiDataKit or open an issue",
+        geo_types = sort!(collect(unknown)))
+
+    return isempty(entries) ? empty_catalog() : CatalogTable(entries)
+end
+
+function _v5_catalog(transport::AbstractTransport)
+    resp = fetch_raw(transport, V5_METADATA_ENDPOINT, Dict{String,String}())
+    200 <= resp.status < 300 ||
+        throw(TransportError(resp.request, resp.status, first(body_string(resp), 200)))
+    return v5_catalog_entries(body_string(resp))
+end
+
 """
     catalog(; source = nothing, signal = nothing, time_type = nothing, geo_type = nothing,
               transport = HTTPTransport()) -> CatalogTable
@@ -207,25 +282,49 @@ reply is about 400 KB, so bind the result rather than calling this in a loop. `s
 `time_type` narrow the request itself, and `signal` narrows it too when `source` is given.
 `geo_type` filters the result, for the reason [`catalog_params`](@ref) explains.
 
+`api` picks which API to describe. `:v4` (the default) is the `covidcast_meta` endpoint
+plus the static fluview rows. `:v5` is the V5 `metadata/` endpoint, one request describing
+every source. `:both` concatenates them, which is how you see what a V4 signal became.
+
+V5 entries leave `time_type`, `num_locations`, `min_lag` and `max_lag` `missing`, because
+`metadata/` does not publish them, and their `fetch_with` is `:fetch_snapshot`. Delphi
+stops adding data to V4 on 2026-09-22, so `api = :v5` is where new signals appear.
+
 Throws [`NoResultsError`](@ref) when no dataset matches at all. The result is a
 [`CatalogTable`](@ref), not an [`EpiTable`](@ref).
 """
 function catalog(; source = nothing, signal = nothing, time_type = nothing,
-                   geo_type = nothing, transport::AbstractTransport = HTTPTransport())
+                   geo_type = nothing, api::Symbol = :v4,
+                   transport::AbstractTransport = api === :v5 ? v5_transport() : HTTPTransport())
+    api in (:v4, :v5, :both) ||
+        throw(ValidationError("api must be :v4, :v5 or :both, got $(repr(api))"))
+
     # "*" is the wire form catalog_params emits for a nil signal, not a signal name.
     signal = (signal === nothing || string(signal) == "*") ? nothing : signal
-    params = catalog_params(; source, signal, time_type, geo_type)
-    fluview_only = _is_fluview_only(source)
 
-    # covidcast_meta has no fluview data_source, so this path never reaches the wire.
-    covidcast = fluview_only ? empty_catalog() : _covidcast_catalog(transport, params)
+    all_entries = empty_catalog()
+    request = ""
 
-    all_entries = vcat(covidcast, fluview_catalog_entries())
-    keep = findall(e -> _matches(e, source, signal, time_type, geo_type), all_entries)
-    if isempty(keep)
-        throw(NoResultsError(fluview_only ?
+    if api === :v5
+        all_entries = _v5_catalog(transport)
+        request = V5_METADATA_ENDPOINT
+    else
+        params = catalog_params(; source, signal, time_type, geo_type)
+        fluview_only = _is_fluview_only(source)
+        # covidcast_meta has no fluview data_source, so this path never reaches the wire.
+        covidcast = fluview_only ? empty_catalog() : _covidcast_catalog(transport, params)
+        all_entries = vcat(covidcast, fluview_catalog_entries())
+        request = fluview_only ?
             "catalog(source = \"fluview\"): no fluview signal matches the other filters" :
-            request_key(COVIDCAST_META_ENDPOINT, params)))
+            request_key(COVIDCAST_META_ENDPOINT, params)
+
+        if api === :both
+            all_entries = vcat(all_entries, _v5_catalog(v5_transport()))
+            request = string(request, " and ", V5_METADATA_ENDPOINT)
+        end
     end
+
+    keep = findall(e -> _matches(e, source, signal, time_type, geo_type), all_entries)
+    isempty(keep) && throw(NoResultsError(request))
     return all_entries[keep]
 end

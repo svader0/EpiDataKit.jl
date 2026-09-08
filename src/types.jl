@@ -190,12 +190,14 @@ convention [`EpiObservation`](@ref) uses. `last_issue` is the most recent vintag
 
 The extent columns admit `missing` because not every endpoint publishes them. `fluview`
 reports one summary row for its whole table rather than per-signal coverage, so its entries
-carry the signal, the resolution, and the level, and nothing else.
+carry the signal, the resolution, and the level, and nothing else. V5 entries leave
+`time_type` `missing` too: the V5 `metadata/` endpoint reports no time resolution, and
+`reference_time` is a plain calendar date either way.
 """
 struct CatalogEntry
     source::Symbol
     signal::Symbol
-    time_type::Symbol
+    time_type::Union{Symbol,Missing}
     geo_level::GeoLevel
     first_period::Union{Date,Missing}
     last_period::Union{Date,Missing}
