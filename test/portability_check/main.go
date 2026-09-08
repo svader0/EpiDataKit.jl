@@ -26,6 +26,7 @@ var plainIntColumns = []string{"geo_level", "missing_code"}
 var expectedColumns = []string{
 	"source", "signal", "geo_level", "geo_id", "period_start", "period_end",
 	"value", "stderr", "sample_size", "issue", "lag", "missing_code",
+	"ci_lower", "ci_upper", "fill_method",
 }
 
 // storageType looks through dictionary encoding to the type a consumer actually decodes.

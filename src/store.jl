@@ -2,7 +2,7 @@
 Columns worth dictionary-encoding: low cardinality and repeated on every row. Encoding the
 float measurements too costs more than it saves. See the README's storage section.
 """
-const DICT_ENCODED_COLUMNS = (:source, :signal, :geo_id, :geo_level, :missing_code)
+const DICT_ENCODED_COLUMNS = (:source, :signal, :geo_id, :geo_level, :fill_method, :missing_code)
 
 """
     save(tbl::EpiTable, path; compress = nothing) -> path
@@ -30,8 +30,11 @@ end
 Schema generation for the on-disk layout. Bump only on a change that an older reader
 cannot handle; appending an enum value is not one, since [`load`](@ref) already reports
 unknown values with a message telling the reader to upgrade.
+
+Generation 2 added `ci_lower`, `ci_upper` and `fill_method`. A generation 1 file is still
+readable: [`load`](@ref) and [`scan`](@ref) supply the absent columns.
 """
-const SCHEMA_VERSION = "1"
+const SCHEMA_VERSION = "2"
 
 _provenance_metadata() = Dict(
     "epidatakit.saved_at" => Dates.format(now(UTC), dateformat"yyyy-mm-dd\THH:MM:SS\Z"),
@@ -64,6 +67,11 @@ function provenance(path::AbstractString)
             schema = get2("epidatakit.schema"))
 end
 
+# Columns a generation 1 file carries. A file missing any of these is not ours; a file
+# missing only the generation 2 additions is, and gets them filled in.
+const V1_COLUMNS = (:source, :signal, :geo_level, :geo_id, :period_start, :period_end,
+                    :value, :stderr, :sample_size, :issue, :lag, :missing_code)
+
 # Open, and reject anything that is not one of ours before a column access turns into a
 # bare KeyError.
 function _open_checked(path::AbstractString)
@@ -75,12 +83,17 @@ function _open_checked(path::AbstractString)
     end
 
     present = Set{Symbol}(Tables.columnnames(t))
-    absent = [c for c in fieldnames(EpiObservation) if !(c in present)]
+    absent = [c for c in V1_COLUMNS if !(c in present)]
     isempty(absent) || throw(StoreError(path,
         "not an EpiDataKit table: missing column(s) " * join(absent, ", ") *
         ". Found: " * join(sort!(collect(present)), ", ")))
     return t
 end
+
+# Generation 1 predates these columns. It also predates any imputation, so every row it
+# holds came straight from the publisher.
+_col_or(t, name::Symbol, fallback) =
+    name in Tables.columnnames(t) ? Tables.getcolumn(t, name) : fallback
 
 """
     load(path) -> EpiTable
@@ -97,6 +110,7 @@ Throws [`StoreError`](@ref) if the file is not one of ours, rather than surfacin
 """
 function load(path::AbstractString)
     t = _open_checked(path)
+    n = length(t.source)
     return StructArray{EpiObservation}((
         source       = _materialize(Symbol, t.source),
         signal       = _materialize(Symbol, t.signal),
@@ -107,8 +121,13 @@ function load(path::AbstractString)
         value        = _materialize(Union{Float64,Missing}, t.value),
         stderr       = _materialize(Union{Float64,Missing}, t.stderr),
         sample_size  = _materialize(Union{Float64,Missing}, t.sample_size),
+        ci_lower     = _materialize(Union{Float64,Missing},
+                                    _col_or(t, :ci_lower, Missing[missing for _ in 1:n])),
+        ci_upper     = _materialize(Union{Float64,Missing},
+                                    _col_or(t, :ci_upper, Missing[missing for _ in 1:n])),
         issue        = _materialize(Union{Date,Missing}, t.issue),
         lag          = _materialize(Union{Int,Missing}, t.lag),
+        fill_method  = _materialize(Symbol, _col_or(t, :fill_method, fill(:source, n))),
         missing_code = _materialize_enum(MissingCode, t.missing_code, path),
     ))
 end
@@ -159,6 +178,18 @@ Base.size(v::EnumView) = size(v.data)
 Base.IndexStyle(::Type{<:EnumView}) = IndexLinear()
 Base.@propagate_inbounds Base.getindex(v::EnumView{T}, i::Int) where {T} = T(Int(v.data[i]))
 
+# `scan` must not allocate a column per row for a generation 1 file, which is the whole
+# point of memory-mapping it.
+struct ConstView{T} <: AbstractVector{T}
+    value::T
+    len::Int
+end
+Base.size(v::ConstView) = (v.len,)
+Base.IndexStyle(::Type{<:ConstView}) = IndexLinear()
+Base.@propagate_inbounds Base.getindex(v::ConstView, ::Int) = v.value
+
+_const_missing(n::Int) = ConstView{Union{Float64,Missing}}(missing, n)
+
 """
     scan(path) -> EpiTable
 
@@ -176,6 +207,7 @@ Use `load` instead when you intend to modify the table.
 """
 function scan(path::AbstractString)
     t = _open_checked(path)
+    n = length(t.source)
     return StructArray{EpiObservation}((
         source       = t.source,
         signal       = t.signal,
@@ -186,8 +218,11 @@ function scan(path::AbstractString)
         value        = t.value,
         stderr       = t.stderr,
         sample_size  = t.sample_size,
+        ci_lower     = _col_or(t, :ci_lower, _const_missing(n)),
+        ci_upper     = _col_or(t, :ci_upper, _const_missing(n)),
         issue        = t.issue,
         lag          = t.lag,
+        fill_method  = _col_or(t, :fill_method, ConstView(:source, n)),
         missing_code = EnumView{MissingCode}(_check_enum(MissingCode, t.missing_code, path)),
     ))
 end

@@ -277,6 +277,54 @@ end
         @test :stderr ∉ DICT_ENCODED_COLUMNS
         @test :period_start ∉ DICT_ENCODED_COLUMNS
     end
+
+    @testset "schema v2 round trip" begin
+        obs = [EpiObservation(source = :sleepcycle, signal = :pct_cough_2_plus_7dav,
+                              geo_level = STATE, geo_id = "al",
+                              period_start = Date(2023, 1, 7), period_end = Date(2023, 1, 7),
+                              value = 12.95, ci_lower = 10.63, ci_upper = 15.52,
+                              issue = Date(2026, 4, 10), lag = 1189, fill_method = :ave)]
+        path = joinpath(mktempdir(), "v2.arrow")
+        EpiDataKit.save(StructArray(obs), path)
+
+        @test EpiDataKit.provenance(path).schema == "2"
+        for t in (EpiDataKit.load(path), EpiDataKit.scan(path))
+            @test only(t).fill_method === :ave
+            @test only(t).ci_lower ≈ 10.63
+            @test only(t).ci_upper ≈ 15.52
+            @test only(t) == only(obs)
+        end
+    end
+
+    @testset "a v1 file still loads" begin
+        # Written the way v0.2.0 wrote it: 12 columns, no ci bounds, no fill_method.
+        path = joinpath(mktempdir(), "v1.arrow")
+        Arrow.write(path, (
+            source = [:nssp], signal = [:pct_ed_visits_covid],
+            geo_level = Int8[Int8(STATE)], geo_id = ["ca"],
+            period_start = [Date(2026, 5, 17)], period_end = [Date(2026, 5, 23)],
+            value = Union{Float64,Missing}[0.07],
+            stderr = Union{Float64,Missing}[missing],
+            sample_size = Union{Float64,Missing}[missing],
+            issue = Union{Date,Missing}[Date(2026, 8, 1)],
+            lag = Union{Int,Missing}[10],
+            missing_code = Int8[Int8(NOT_MISSING)],
+        ); metadata = Dict("epidatakit.schema" => "1"))
+
+        for t in (EpiDataKit.load(path), EpiDataKit.scan(path))
+            @test length(t) == 1
+            @test only(t).fill_method === :source
+            @test only(t).ci_lower === missing
+            @test only(t).ci_upper === missing
+            @test only(t).value ≈ 0.07
+        end
+    end
+
+    @testset "a file missing a v1 column is still rejected" begin
+        path = joinpath(mktempdir(), "junk.arrow")
+        Arrow.write(path, (source = [:nssp], value = [1.0]))
+        @test_throws EpiDataKit.StoreError EpiDataKit.load(path)
+    end
 end
 
 @testset "DataFrames interop" begin
