@@ -1,3 +1,4 @@
+using CSV
 using Dates
 using StructArrays
 using Tables
@@ -211,8 +212,10 @@ end
 end
 
 @testset "EpiObservation equality" begin
-    mk(v) = EpiObservation(:s, :x, STATE, "ca", Date(2026, 5, 17), Date(2026, 5, 23),
-                           v, missing, missing, Date(2026, 8, 1), 10, NOT_MISSING)
+    mk(v) = EpiObservation(source = :s, signal = :x, geo_level = STATE, geo_id = "ca",
+                           period_start = Date(2026, 5, 17), period_end = Date(2026, 5, 23),
+                           value = v, issue = Date(2026, 8, 1), lag = 10,
+                           missing_code = NOT_MISSING)
 
     # `==` on a struct holding `missing` would otherwise propagate `missing` instead of
     # answering, which would make observations impossible to compare or deduplicate.
@@ -231,4 +234,35 @@ end
     @test e isa EpiTable
     @test length(e) == 0
     @test eltype(e) == EpiObservation
+end
+
+@testset "schema v2 fields" begin
+    o = EpiObservation(
+        source = :nssp, signal = :pct_ed_visits_covid, geo_level = STATE, geo_id = "ca",
+        period_start = Date(2026, 5, 17), period_end = Date(2026, 5, 23),
+        value = 0.07,
+    )
+    @test o.fill_method === :source
+    @test o.ci_lower === missing
+    @test o.ci_upper === missing
+    @test o.stderr === missing
+    @test o.missing_code === NOT_MISSING
+    @test fieldcount(EpiObservation) == 15
+
+    # The keyword constructor and the positional one must agree.
+    p = EpiObservation(:nssp, :pct_ed_visits_covid, STATE, "ca",
+                       Date(2026, 5, 17), Date(2026, 5, 23),
+                       0.07, missing, missing, missing, missing,
+                       missing, missing, :source, NOT_MISSING)
+    @test o == p
+    @test hash(o) == hash(p)
+
+    # V4 rows carry fill_method = :source, because V4 did no imputation.
+    body = "geo_value,signal,source,geo_type,time_type,time_value,direction,issue,lag," *
+           "missing_value,missing_stderr,missing_sample_size,value,stderr,sample_size\n" *
+           "ca,pct_ed_visits_covid,nssp,state,week,202620,,202630,10,0,1,1,0.07,,\n"
+    tbl = standardize(DelphiCovidcast(), CSV.File(IOBuffer(body);
+                      types = Dict("geo_value" => String), stringtype = String))
+    @test only(tbl.fill_method) === :source
+    @test only(tbl.ci_lower) === missing
 end

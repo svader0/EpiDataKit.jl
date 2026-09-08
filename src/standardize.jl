@@ -82,8 +82,10 @@ function _columns(rows, per_row::Int = 1)
     cols = (source = Symbol[], signal = Symbol[], geo_level = GeoLevel[], geo_id = String[],
             period_start = Date[], period_end = Date[],
             value = Union{Float64,Missing}[], stderr = Union{Float64,Missing}[],
-            sample_size = Union{Float64,Missing}[], issue = Union{Date,Missing}[],
-            lag = Union{Int,Missing}[], missing_code = MissingCode[])
+            sample_size = Union{Float64,Missing}[],
+            ci_lower = Union{Float64,Missing}[], ci_upper = Union{Float64,Missing}[],
+            issue = Union{Date,Missing}[], lag = Union{Int,Missing}[],
+            fill_method = Symbol[], missing_code = MissingCode[])
     foreach(c -> sizehint!(c, n), cols)
     return cols
 end
@@ -116,8 +118,11 @@ function standardize(::DelphiCovidcast, raw)
         push!(c.value, coerce_float(_get(row, :value, avail)))
         push!(c.stderr, coerce_float(_get(row, :stderr, avail)))
         push!(c.sample_size, coerce_float(_get(row, :sample_size, avail)))
+        push!(c.ci_lower, missing)
+        push!(c.ci_upper, missing)
         push!(c.issue, parse_issue(tt, _get(row, :issue, avail)))
         push!(c.lag, coerce_int(_get(row, :lag, avail)))
+        push!(c.fill_method, :source)
         push!(c.missing_code, coerce_missing_code(_get(row, :missing_value, avail)))
     end
 
@@ -159,8 +164,11 @@ function standardize(::DelphiFluView, raw)
             push!(c.value, v)
             push!(c.stderr, missing)
             push!(c.sample_size, m === :wili || m === :ili ? patients : missing)
+            push!(c.ci_lower, missing)
+            push!(c.ci_upper, missing)
             push!(c.issue, iss)
             push!(c.lag, lag)
+            push!(c.fill_method, :source)
             push!(c.missing_code, NOT_MISSING)
         end
     end

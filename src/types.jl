@@ -54,6 +54,15 @@ reported it rather than recomputed. `issue - period_end` gives days regardless, 
 schema does not record the time resolution, so deriving `lag` would mean inferring it from
 the interval width and then converting. Nowcast evaluation filters on lag directly, so it
 is worth a column.
+
+`fill_method` records how nulls were handled during geographic aggregation, which the V5
+API treats as part of a row's identity: `:source` means the value came straight from the
+publisher with no aggregation, `:ave` means nulls were filled with a neighbour average,
+and `:zero` means they were filled with zero. V3 and V4 rows are always `:source`.
+
+`ci_lower` and `ci_upper` bound a confidence interval. V5 reports uncertainty this way for
+some sources, where V3 and V4 reported `stderr` and `sample_size`. A row carries one pair
+or the other, never both.
 """
 struct EpiObservation
     source::Symbol
@@ -65,10 +74,21 @@ struct EpiObservation
     value::Union{Float64,Missing}
     stderr::Union{Float64,Missing}
     sample_size::Union{Float64,Missing}
+    ci_lower::Union{Float64,Missing}
+    ci_upper::Union{Float64,Missing}
     issue::Union{Date,Missing}
     lag::Union{Int,Missing}
+    fill_method::Symbol
     missing_code::MissingCode
 end
+
+EpiObservation(; source, signal, geo_level, geo_id, period_start, period_end,
+                 value = missing, stderr = missing, sample_size = missing,
+                 ci_lower = missing, ci_upper = missing, issue = missing,
+                 lag = missing, fill_method = :source, missing_code = NOT_MISSING) =
+    EpiObservation(source, signal, geo_level, geo_id, period_start, period_end,
+                   value, stderr, sample_size, ci_lower, ci_upper, issue, lag,
+                   fill_method, missing_code)
 
 # --------------------------------------------------
 #                   EQUALITY TYPES

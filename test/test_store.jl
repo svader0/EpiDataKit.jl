@@ -11,15 +11,17 @@ using EpiDataKit: save, load, scan, provenance, decode_response, mock_response, 
 # the dictionary-encoded columns actually have something to encode.
 function sample_table()
     obs = [
-        EpiObservation(:nssp, :pct_ed_visits_covid, STATE, "ca",
-                       Date(2026, 5, 17), Date(2026, 5, 23),
-                       0.07, missing, missing, Date(2026, 8, 1), 10, NOT_MISSING),
-        EpiObservation(:nssp, :pct_ed_visits_covid, STATE, "ny",
-                       Date(2026, 5, 17), Date(2026, 5, 23),
-                       missing, 0.5, 100.0, Date(2026, 8, 1), 10, CENSORED),
-        EpiObservation(:jhu_csse, :confirmed_incidence_num, COUNTY, "06075",
-                       Date(2020, 6, 1), Date(2020, 6, 1),
-                       2437.0, missing, missing, missing, missing, NOT_MISSING),
+        EpiObservation(source = :nssp, signal = :pct_ed_visits_covid, geo_level = STATE,
+                       geo_id = "ca", period_start = Date(2026, 5, 17),
+                       period_end = Date(2026, 5, 23), value = 0.07,
+                       issue = Date(2026, 8, 1), lag = 10),
+        EpiObservation(source = :nssp, signal = :pct_ed_visits_covid, geo_level = STATE,
+                       geo_id = "ny", period_start = Date(2026, 5, 17),
+                       period_end = Date(2026, 5, 23), stderr = 0.5, sample_size = 100.0,
+                       issue = Date(2026, 8, 1), lag = 10, missing_code = CENSORED),
+        EpiObservation(source = :jhu_csse, signal = :confirmed_incidence_num,
+                       geo_level = COUNTY, geo_id = "06075", period_start = Date(2020, 6, 1),
+                       period_end = Date(2020, 6, 1), value = 2437.0),
     ]
     return StructArray(obs)
 end
@@ -187,8 +189,9 @@ end
             lvls = collect(instances(GeoLevel))
             codes = [MissingCode(mod(Int8(i), Int8(length(instances(MissingCode)))))
                      for i in eachindex(lvls)]
-            obs = [EpiObservation(:s, :x, lvls[i], "ca", Date(2020, 1, 1), Date(2020, 1, 1),
-                                  1.0, missing, missing, missing, missing, codes[i])
+            obs = [EpiObservation(source = :s, signal = :x, geo_level = lvls[i], geo_id = "ca",
+                                  period_start = Date(2020, 1, 1), period_end = Date(2020, 1, 1),
+                                  value = 1.0, missing_code = codes[i])
                    for i in eachindex(lvls)]
             t = StructArray(obs)
             @test load(save(t, joinpath(dir, "all.arrow"))) == t

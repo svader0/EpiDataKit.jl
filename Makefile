@@ -35,7 +35,7 @@ portability: ## Read an Arrow file from Go (make portability FILE=out.arrow)
 	if [ -z "$$f" ]; then \
 		d=$$(mktemp -d); f="$$d/sample.arrow"; \
 		echo "No FILE given — writing a sample table to $$f"; \
-		$(JULIA) $(PROJECT) -e 'using EpiDataKit, Dates, StructArrays; obs = [EpiObservation(:nssp, :pct_ed_visits_covid, STATE, "ca", Date(2026,5,17), Date(2026,5,23), 0.07, missing, missing, Date(2026,8,1), 10, NOT_MISSING), EpiObservation(:jhu_csse, :confirmed_incidence_num, COUNTY, "06075", Date(2020,6,1), Date(2020,6,1), 2437.0, missing, missing, missing, missing, CENSORED)]; EpiDataKit.save(StructArray(obs), ARGS[1])' "$$f"; \
+		$(JULIA) $(PROJECT) -e 'using EpiDataKit, Dates, StructArrays; obs = [EpiObservation(source=:nssp, signal=:pct_ed_visits_covid, geo_level=STATE, geo_id="ca", period_start=Date(2026,5,17), period_end=Date(2026,5,23), value=0.07, issue=Date(2026,8,1), lag=10), EpiObservation(source=:jhu_csse, signal=:confirmed_incidence_num, geo_level=COUNTY, geo_id="06075", period_start=Date(2020,6,1), period_end=Date(2020,6,1), value=2437.0, missing_code=CENSORED)]; EpiDataKit.save(StructArray(obs), ARGS[1])' "$$f"; \
 	else \
 		case "$$f" in /*) ;; *) f="$$PWD/$$f" ;; esac; \
 	fi; \
