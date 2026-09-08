@@ -171,5 +171,17 @@ using EpiDataKit: canonical_query, request_key, auth_headers, backoff_delay, fet
         # A Link header that is not a next page must not be followed.
         @test EpiDataKit.next_link(
             mock_response("x"; headers = Dict("Link" => "<$url>; rel=\"prev\""))) === nothing
+
+        # RFC 8288 lets parameters come in any order, and lets a header carry several links.
+        @test EpiDataKit.next_link(mock_response("x"; headers = Dict(
+            "Link" => "<$url>; type=\"text/csv\"; rel=\"next\""))) == url
+        @test EpiDataKit.next_link(mock_response("x"; headers = Dict(
+            "Link" => "<http://example/prev>; rel=\"prev\", <$url>; rel=\"next\""))) == url
+        @test EpiDataKit.next_link(mock_response("x"; headers = Dict(
+            "Link" => "<$url>; rel=next"))) == url
+        @test EpiDataKit.next_link(mock_response("x"; headers = Dict(
+            "Link" => "<$url>; REL=\"Next\""))) == url
+        @test EpiDataKit.next_link(mock_response("x"; headers = Dict(
+            "Link" => "<$url>; rel=\"nextpage\""))) === nothing
     end
 end

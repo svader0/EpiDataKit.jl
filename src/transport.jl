@@ -64,8 +64,12 @@ it hands back already carries `header=false`, so pages concatenate as raw CSV.
 function next_link(r::EpiResponse)
     raw = get(r.headers, "link", nothing)
     raw === nothing && return nothing
-    m = match(r"<([^>]+)>\s*;\s*rel\s*=\s*\"?next\"?", raw)
-    return m === nothing ? nothing : String(m.captures[1])
+    for m in eachmatch(r"<([^>]*)>([^<]*)", raw)
+        rel = match(r"(?i)\brel\s*=\s*\"?([^\";,]*)\"?", m.captures[2])
+        rel === nothing && continue
+        "next" in lowercase.(split(rel.captures[1])) && return String(m.captures[1])
+    end
+    return nothing
 end
 
 """
