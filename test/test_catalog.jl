@@ -344,10 +344,13 @@ end
             @test all(e -> e.source === :nssp && e.geo_level == STATE, c2)
             @test_throws NoResultsError catalog(api = :v5, source = "nssp",
                                                 signal = "nope", transport = t)
+            # V5 publishes no resolution, so a time_type filter can never match a V5 entry.
+            @test_throws NoResultsError catalog(api = :v5, time_type = "week", transport = t)
         end
 
         @testset "an unknown api is rejected before any request" begin
             @test_throws ValidationError catalog(api = :v9, transport = MockTransport())
+            @test_throws ValidationError catalog(api = :both, transport = MockTransport())
         end
     end
 end

@@ -255,7 +255,7 @@ end
 
 """
     catalog(; source = nothing, signal = nothing, time_type = nothing, geo_type = nothing,
-              transport = HTTPTransport()) -> CatalogTable
+              api = :v4, transport = HTTPTransport()) -> CatalogTable
 
 List the datasets this package can fetch.
 
@@ -284,11 +284,13 @@ reply is about 400 KB, so bind the result rather than calling this in a loop. `s
 
 `api` picks which API to describe. `:v4` (the default) is the `covidcast_meta` endpoint
 plus the static fluview rows. `:v5` is the V5 `metadata/` endpoint, one request describing
-every source. `:both` concatenates them, which is how you see what a V4 signal became.
+every source. To see both at once, call each and `vcat` the results.
 
 V5 entries leave `time_type`, `num_locations`, `min_lag` and `max_lag` `missing`, because
-`metadata/` does not publish them, and their `fetch_with` is `:fetch_snapshot`. Delphi
-stops adding data to V4 on 2026-09-22, so `api = :v5` is where new signals appear.
+`metadata/` does not publish them, and their `fetch_with` is `:fetch_snapshot`. A
+`time_type` filter therefore matches no V5 entry and raises `NoResultsError` under
+`api = :v5`. Delphi stops adding data to V4 on 2026-09-22, so `api = :v5` is where new
+signals appear.
 
 Throws [`NoResultsError`](@ref) when no dataset matches at all. The result is a
 [`CatalogTable`](@ref), not an [`EpiTable`](@ref).
@@ -296,8 +298,8 @@ Throws [`NoResultsError`](@ref) when no dataset matches at all. The result is a
 function catalog(; source = nothing, signal = nothing, time_type = nothing,
                    geo_type = nothing, api::Symbol = :v4,
                    transport::AbstractTransport = api === :v5 ? v5_transport() : HTTPTransport())
-    api in (:v4, :v5, :both) ||
-        throw(ValidationError("api must be :v4, :v5 or :both, got $(repr(api))"))
+    api in (:v4, :v5) ||
+        throw(ValidationError("api must be :v4 or :v5, got $(repr(api))"))
 
     # "*" is the wire form catalog_params emits for a nil signal, not a signal name.
     signal = (signal === nothing || string(signal) == "*") ? nothing : signal
@@ -317,11 +319,6 @@ function catalog(; source = nothing, signal = nothing, time_type = nothing,
         request = fluview_only ?
             "catalog(source = \"fluview\"): no fluview signal matches the other filters" :
             request_key(COVIDCAST_META_ENDPOINT, params)
-
-        if api === :both
-            all_entries = vcat(all_entries, _v5_catalog(v5_transport()))
-            request = string(request, " and ", V5_METADATA_ENDPOINT)
-        end
     end
 
     keep = findall(e -> _matches(e, source, signal, time_type, geo_type), all_entries)
