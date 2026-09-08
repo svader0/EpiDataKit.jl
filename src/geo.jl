@@ -14,6 +14,9 @@ const GEO_TYPE_MAP = Dict{String,GeoLevel}(
     "hrr" => HRR,
     "dma" => DMA,
     "hsa_nci" => HSA_NCI,
+    "census_region" => CENSUS_REGION,
+    "sewershed" => SEWERSHED,
+    "va_facility" => VA_FACILITY,
 )
 
 """

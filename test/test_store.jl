@@ -144,11 +144,11 @@ end
         mktempdir() do dir
             cols = Tables.columntable(sample_table())
             p = joinpath(dir, "future.arrow")
-            Arrow.write(p, merge(cols, (geo_level = Int8[9, 9, 9],)))
+            Arrow.write(p, merge(cols, (geo_level = Int8[12, 12, 12],)))
 
             err = try; load(p); catch e; e; end
             @test err isa StoreError
-            @test occursin("9", err.msg)
+            @test occursin("12", err.msg)
             @test occursin("GeoLevel", err.msg)
             @test occursin("newer version", err.msg)
 
@@ -221,7 +221,7 @@ end
         mktempdir() do dir
             cols = Tables.columntable(sample_table())
             p = joinpath(dir, "future.arrow")
-            Arrow.write(p, merge(cols, (geo_level = Int8[9, 9, 9],)))
+            Arrow.write(p, merge(cols, (geo_level = Int8[12, 12, 12],)))
 
             err = try; scan(p); catch e; e; end
             @test err isa StoreError

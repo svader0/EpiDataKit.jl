@@ -63,4 +63,22 @@ using EpiDataKit: parse_geo_level, normalize_geo_id, GEO_TYPE_MAP
             @test parse_geo_level(name) == lvl
         end
     end
+
+    @testset "V5 geographic levels" begin
+        @test parse_geo_level("census_region") === CENSUS_REGION
+        @test parse_geo_level("sewershed") === SEWERSHED
+        @test parse_geo_level("va_facility") === VA_FACILITY
+
+        # On-disk values. Never renumber these.
+        @test Int(CENSUS_REGION) == 9
+        @test Int(SEWERSHED) == 10
+        @test Int(VA_FACILITY) == 11
+
+        # The V4 numbering must not move.
+        @test Int(NATION) == 0
+        @test Int(HSA_NCI) == 8
+
+        @test normalize_geo_id(CENSUS_REGION, "1") == "1"
+        @test normalize_geo_id(VA_FACILITY, "ABC") == "abc"
+    end
 end

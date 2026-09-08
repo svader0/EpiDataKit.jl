@@ -15,6 +15,9 @@ decode to the wrong level.
     HRR             = 6
     DMA             = 7
     HSA_NCI         = 8
+    CENSUS_REGION   = 9
+    SEWERSHED       = 10
+    VA_FACILITY     = 11
 end
 
 """
