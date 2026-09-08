@@ -52,7 +52,7 @@ unknown signal or geo_type, both at status 200.
 """
 function decode_v5(resp::EpiResponse)
     body = body_string(resp)
-    stripped = strip(body)
+    stripped = strip(lstrip(body, '﻿'))
 
     # V4 used an empty body for "no rows". V5 always sends the header, so an empty body
     # here means the response was cut short.

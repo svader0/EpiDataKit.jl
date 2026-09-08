@@ -67,6 +67,13 @@ const V5_ROWS = V5_KEY_HEADER * ",value\n" *
         @test Tables.columntable(decode_v5(mock_response(body))).geo_value == ["06075"]
     end
 
+    @testset "a leading BOM does not defeat the header gate" begin
+        bom = "﻿"
+        t = Tables.columntable(decode_v5(mock_response(bom * V5_ROWS)))
+        @test length(t.value) == 2
+        @test_throws NoResultsError decode_v5(mock_response(bom * V5_KEY_HEADER * ",value\n"))
+    end
+
     @testset "v5_error_message" begin
         @test v5_error_message("not json") === nothing
         @test v5_error_message("""{"detail":[{"loc":["query","x"],"msg":"bad"}]}""") ==
