@@ -30,9 +30,9 @@ using EpiDataKit: HTTPTransport, fetch_raw, decode_response, standardize, body_s
                   ratelimit, DelphiCovidcast, COVIDCAST_CSV_HEADER, COVIDCAST_ENDPOINT,
                   DelphiFluView, FLUVIEW_ENDPOINT, FLUVIEW_MEASURES,
                   COVIDCAST_META_ENDPOINT, COVIDCAST_META_CSV_HEADER,
-                  v5_transport, decode_v5, v5_error_message, V5_KEY_HEADER,
+                  v5_transport, v5_error_message, V5_KEY_HEADER,
                   V5_SNAPSHOT_ENDPOINT, V5_ARCHIVE_ENDPOINT, V5_METADATA_ENDPOINT,
-                  V5_SOURCES, fetch_snapshot, fetch_archive, DelphiV5, next_link
+                  V5_SOURCES, fetch_snapshot, next_link
 
 using JSON3
 
@@ -212,9 +212,7 @@ const CHECKS = [
     ),
 ]
 
-# The V5 API is a different host with a different failure protocol, so its contracts get
-# their own transport and their own list. Rate limits are tighter here: 3 requests/minute
-# on snapshot and 5 on archive, so this list stays short on purpose.
+# Anonymous V5 limits: 3 requests/minute on snapshot/, 5 on archive/.
 const CHECKS_V5 = [
     (
         name = "v5 snapshot success",
@@ -299,7 +297,6 @@ const CHECKS_V5 = [
             resp.status == 200 || push!(problems, "expected status 200, got $(resp.status)")
             startswith(strip(body_string(resp)), V5_KEY_HEADER) ||
                 push!(problems, "key header changed")
-            # Pagination is how fetch_archive avoids an unbounded body.
             next_link(resp) === nothing &&
                 push!(problems, "use_pagination=true produced no `Link: rel=next` header")
             return problems
@@ -406,7 +403,7 @@ function main()
     failed, last_resp = run_checks(CHECKS, transport, "api.delphi.cmu.edu")
 
     v5 = v5_transport()
-    # 3 requests/minute on snapshot, so pace the V5 half rather than racing it.
+    # 3 requests/minute on snapshot/.
     v5_failed, _ = run_checks(CHECKS_V5, v5, "delphi.cmu.edu/epidata/v5"; pause = 21)
     failed += v5_failed
 
