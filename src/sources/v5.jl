@@ -352,3 +352,152 @@ function filter_observations(tbl::EpiTable; geo_values = "*", reference_time = "
                         (fm === nothing || o.fill_method === fm), tbl)
     return isempty(keep) ? empty_table() : tbl[keep]
 end
+
+_signal_list(signal) = signal isa AbstractString || signal isa Symbol ?
+                       [string(signal)] : [string(s) for s in signal]
+
+# `next_link` hands back an absolute URL, and the pages after the first carry no header
+# line, so they concatenate onto the first page's body as raw CSV.
+function _fetch_v5_body(transport, endpoint, params, paginate::Bool)
+    resp = fetch_raw(transport, endpoint, paginate ?
+                     merge(params, Dict("use_pagination" => "true")) : params)
+    pages = [resp]
+    if paginate
+        url = next_link(resp)
+        while url !== nothing
+            r = fetch_raw(transport, url, Dict{String,String}())
+            push!(pages, r)
+            url = next_link(r)
+        end
+    end
+    length(pages) == 1 && return resp
+    joined = join((body_string(p) for p in pages), "")
+    return EpiResponse(resp.status, Vector{UInt8}(codeunits(joined)), resp.headers,
+                       resp.request)
+end
+
+function _fetch_v5(endpoint, transport, signal, time_type, filters; params...)
+    signals = _signal_list(signal)
+    src = DelphiV5(check_v5_source(params[:source]))
+    tables = EpiTable[]
+
+    for sig in signals
+        p = v5_params(; signal = sig, params...)
+        resp = _fetch_v5_body(transport, endpoint, p, endpoint == V5_ARCHIVE_ENDPOINT)
+        raw = try
+            decode_v5(resp)
+        catch e
+            # One signal of several returning nothing is not a failure of the whole call.
+            (e isa NoResultsError && length(signals) > 1) || rethrow()
+            nothing
+        end
+        raw === nothing || push!(tables, standardize(src, raw; time_type))
+    end
+
+    isempty(tables) && throw(NoResultsError(string(endpoint, " ", signal)))
+    combined = length(tables) == 1 ? only(tables) : vcat(tables...)
+    out = filter_observations(combined; filters...)
+    isempty(out) && throw(NoResultsError(
+        "the request returned rows but the geo_values, reference_time or fill_method " *
+        "filter matched none of them"))
+    return out
+end
+
+# Accept the V4 spellings epidatr also keeps, and say so once.
+function _deprecated(new_name::String, old_name::String, old_value, new_value)
+    old_value === nothing && return new_value
+    @warn "`$old_name` is the V4 name; V5 calls it `$new_name`"
+    return old_value
+end
+
+"""
+    fetch_snapshot(; source, signal, geo_type, geo_values = "*", reference_time = "*",
+                     fill_method = nothing, snapshot_date = nothing, time_type = nothing,
+                     transport = v5_transport()) -> EpiTable
+
+Fetch a V5 signal as it stood on one date, in the standard schema.
+
+```julia
+tbl = fetch_snapshot(
+    source         = "nssp",
+    signal         = "pct_ed_visits_covid",
+    geo_type       = "state",
+    geo_values     = ["ca", "ny"],
+    reference_time = Date(2026, 1, 1):Date(2026, 6, 1),
+)
+```
+
+`snapshot_date` reconstructs what was known on that date, the way `as_of` did in V4. Omit
+it for the latest values.
+
+`geo_values`, `reference_time` and `fill_method` filter the result rather than the request:
+V5 returns every location and every reference time for a `(source, signal, geo_type)`, so
+one call downloads the signal's whole history. Bind the result instead of calling this in a
+loop.
+
+`signal` takes a vector to fetch several at once. That costs one request each, because a
+comma separated list returns zero rows upstream.
+
+Throws [`NoResultsError`](@ref) when the server matched nothing, and when it matched rows
+that the filters then removed.
+"""
+function fetch_snapshot(; source, signal, geo_type, geo_values = "*",
+                          reference_time = "*", fill_method = nothing,
+                          snapshot_date = nothing, time_type = nothing,
+                          transport::AbstractTransport = v5_transport(),
+                          time_values = nothing, as_of = nothing)
+    reference_time = _deprecated("reference_time", "time_values", time_values, reference_time)
+    snapshot_date = _deprecated("snapshot_date", "as_of", as_of, snapshot_date)
+
+    return _fetch_v5(V5_SNAPSHOT_ENDPOINT, transport, signal, time_type,
+                     (; geo_values, reference_time, fill_method);
+                     source, geo_type, snapshot_date)
+end
+
+"""
+    fetch_archive(; source, signal, geo_type, geo_values = "*", reference_time = "*",
+                    fill_method = nothing, report_time = "*", time_type = nothing,
+                    transport = v5_transport()) -> EpiTable
+
+Fetch every revision of a V5 signal, in the standard schema.
+
+Where [`fetch_snapshot`](@ref) returns one row per key, this returns one row per change, so
+the same period appears once per `issue`. That is what backtesting needs.
+
+`report_time` narrows the request upstream and takes an operator: `Date(2026, 6, 26)` or
+`"=2026-06-26"` for one release, `"<2026-06-26"` or `">2026-06-26"` for a range. Omit it,
+and the server returns the whole report time history, which the API's own docs warn can run
+to gigabytes.
+
+Pagination is on, so the result arrives in pages that this function joins.
+"""
+function fetch_archive(; source, signal, geo_type, geo_values = "*",
+                         reference_time = "*", fill_method = nothing,
+                         report_time = "*", time_type = nothing,
+                         transport::AbstractTransport = v5_transport(),
+                         time_values = nothing, issues = nothing)
+    reference_time = _deprecated("reference_time", "time_values", time_values, reference_time)
+    report_time = _deprecated("report_time", "issues", issues, report_time)
+    rt = report_time isa AbstractString && strip(report_time) == "*" ? nothing : report_time
+
+    return _fetch_v5(V5_ARCHIVE_ENDPOINT, transport, signal, time_type,
+                     (; geo_values, reference_time, fill_method);
+                     source, geo_type, report_time = rt)
+end
+
+"""
+    fetch_epidata(; source, signal, geo_type, kwargs...) -> EpiTable
+
+Fetch V5 data, picking the endpoint from the arguments.
+
+Passing `report_time` asks for revision history, so this calls [`fetch_archive`](@ref).
+Anything else calls [`fetch_snapshot`](@ref). Passing both is an error, because they
+name different endpoints rather than different filters.
+"""
+function fetch_epidata(; report_time = nothing, snapshot_date = nothing, kwargs...)
+    report_time !== nothing && snapshot_date !== nothing && throw(ValidationError(
+        "snapshot_date and report_time select different endpoints: snapshot_date is " *
+        "fetch_snapshot, report_time is fetch_archive. Pass one"))
+    report_time === nothing && return fetch_snapshot(; snapshot_date, kwargs...)
+    return fetch_archive(; report_time, kwargs...)
+end

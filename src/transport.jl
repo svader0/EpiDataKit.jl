@@ -211,7 +211,8 @@ end
 
 function fetch_raw(t::HTTPTransport, endpoint::AbstractString, params)
     key = request_key(endpoint, params)
-    url = string(rstrip(t.base_url, '/'), "/", lstrip(endpoint, '/'))
+    url = startswith(endpoint, "http") ? String(endpoint) :
+          string(rstrip(t.base_url, '/'), "/", lstrip(endpoint, '/'))
     headers = auth_headers(t)
     local last_resp::Union{EpiResponse,Nothing} = nothing
 

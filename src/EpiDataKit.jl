@@ -59,7 +59,8 @@ export NOT_MISSING, NOT_APPLICABLE, REGION_EXCEPTION, CENSORED, DELETED, OTHER
 # Sources and fetching
 export AbstractSource, DelphiCovidcast, DelphiFluView, DelphiCovidcastMeta, DelphiV5
 export AbstractTransport, HTTPTransport, MockTransport, v5_transport
-export fetch_covidcast, fetch_fluview, standardize
+export fetch_covidcast, fetch_fluview, fetch_snapshot, fetch_archive, fetch_epidata,
+       standardize
 
 # Catalog
 export CatalogEntry, CatalogTable, catalog
