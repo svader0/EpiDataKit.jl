@@ -238,7 +238,7 @@ function fetch_raw(t::HTTPTransport, endpoint::AbstractString, params)
                          connect_timeout = t.timeout,
                          read_idle_timeout = t.timeout,
                          max_decompressed_size = t.max_response_bytes,
-                         status_exception = false, retry = false)
+                         status_exception = false, retry = false, redirect = false)
             EpiResponse(r.status, Vector{UInt8}(r.body), _headers_dict(r.headers), key)
         catch e
             e isa InterruptException && rethrow()

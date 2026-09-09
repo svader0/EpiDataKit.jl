@@ -43,6 +43,8 @@ using EpiDataKit: HTTPTransport, fetch_raw, ratelimit, body_string, TransportErr
         elseif path == "/lowquota"
             return HTTP.Response(200,
                 ["X-My-Limit" => "60", "X-My-Remaining" => "3"], "hello")
+        elseif path == "/redirect"
+            return HTTP.Response(302, ["Location" => "/echo"], "")
         end
         return HTTP.Response(404, "<html>not found</html>")
     end
@@ -197,6 +199,15 @@ using EpiDataKit: HTTPTransport, fetch_raw, ratelimit, body_string, TransportErr
             @test occursin("token=sekrit", body)
             # Another host never sees the key.
             @test_throws TransportError fetch_raw(t, "http://evil.example/echo", Dict{String,String}())
+        end
+
+        @testset "redirects are not followed, so the token cannot leave with one" begin
+            t = HTTPTransport(base_url = base, api_key = "sekrit", auth = :token, max_retries = 0)
+            echo_hits_before = get(hits, "/echo", 0)
+            r = fetch_raw(t, "redirect", Dict{String,String}())
+            @test r.status == 302
+            @test !occursin("sekrit", body_string(r))
+            @test get(hits, "/echo", 0) == echo_hits_before
         end
     finally
         close(server)
