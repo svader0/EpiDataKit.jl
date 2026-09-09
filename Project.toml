@@ -1,7 +1,7 @@
 name = "EpiDataKit"
 uuid = "9350bdd5-99b5-4ff7-90d3-477c4c1035bf"
 authors = ["Sam Vader <samvader13@gmail.com> and contributors"]
-version = "0.2.0"
+version = "0.3.0"
 
 [deps]
 Arrow = "69666777-d1a9-59fb-9406-91d4454c9d45"

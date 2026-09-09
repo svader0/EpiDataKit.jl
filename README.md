@@ -36,7 +36,8 @@ tbl = fetch_covidcast(
 tbl[1]
 # EpiObservation(:nssp, :pct_ed_visits_covid, STATE, "ca",
 #                Date("2026-05-17"), Date("2026-05-23"),
-#                0.07, missing, missing, Date("2026-08-01"), NOT_MISSING)
+#                0.07, missing, missing, missing, missing,
+#                Date("2026-08-01"), 10, :source, NOT_MISSING)
 
 # Save table to disk
 EpiDataKit.save(tbl, "nssp_covid.arrow")
@@ -106,6 +107,101 @@ all = vcat(tbl, flu)
 EpiDataKit.save(all, "combined.arrow")
 ```
 
+### Epidata V5
+
+Delphi stops adding new data to the older API on 2026-09-22. New data lands only in
+[Epidata V5](https://cmu-delphi.github.io/delphi-epidata/api/v5.html), which is a different
+host with a different shape. `fetch_snapshot` is the V5 counterpart of `fetch_covidcast`:
+
+```julia
+tbl = fetch_snapshot(
+    source         = "nssp",
+    signal         = "pct_ed_visits_covid",
+    geo_type       = "state",
+    geo_values     = ["ca", "ny"],
+    reference_time = Date(2026, 1, 1):Date(2026, 6, 1),
+)
+```
+
+The result is the same `EpiObservation` schema, so V4 and V5 tables still combine:
+
+```julia
+EpiDataKit.save(vcat(old, tbl), "combined.arrow")
+```
+
+**One request returns everything.** V5 removed `geo_value` and `time_values` from the wire,
+so a call downloads every location and every reference time for that signal and geographic
+level. `geo_values` and `reference_time` filter what came back. Bind the result rather than
+calling this in a loop, and expect a first call to be slower and larger than the V4
+equivalent.
+
+`fetch_archive` returns every revision instead of one row per key, which is what
+backtesting needs:
+
+```julia
+hist = fetch_archive(
+    source = "nssp", signal = "pct_ed_visits_covid", geo_type = "state",
+    geo_values = "ca", report_time = ">2026-06-01",
+)
+```
+
+`report_time` takes an operator: `"=2026-06-26"` for one release, `"<"` or `">"` for a
+range. Omit it and the server returns the whole report time history, which can be very
+large. `fetch_epidata` picks the endpoint for you: pass `report_time` and it calls
+`fetch_archive`, otherwise `fetch_snapshot`.
+
+#### What changed from V4
+
+| V4 | V5 |
+|---|---|
+| `data_source` | `source` |
+| `geo_value = "ca"` | `geo_values = "ca"`, applied on the client |
+| `time_values = "202620-202629"` | `reference_time = Date(a):Date(b)`, applied on the client |
+| `as_of` | `snapshot_date`, and it takes a calendar date, not an epiweek |
+| `issues` | `report_time`, on `fetch_archive` only |
+| `time_type` | gone; `reference_time` is a calendar date and the resolution is inferred |
+| `lag` as a filter | gone; still a column, computed from `report_time - reference_time` |
+| `doctor-visits` | `claims_outpatient` |
+| `hospital-admissions` | `claims_inpatient` |
+
+`time_values`, `as_of`, and `issues` still work as argument names. Each warns once and maps
+to the new one.
+
+Two columns are new. `fill_method` says how nulls were handled during geographic
+aggregation (`:source`, `:ave`, or `:zero`), and it is part of a row's identity upstream, so
+an aggregated level returns the same period once per method. `ci_lower` and `ci_upper`
+carry the uncertainty that `stderr` and `sample_size` carried in V4; a row has one pair or
+the other, never both.
+
+#### Which sources work
+
+Working: `nssp`, `nhsn`, `claims_outpatient`, `claims_inpatient`, `nchs_mortality`,
+`sleepcycle`, `va_respiratory`.
+
+Not yet: `pophive`, `nickel_beta`, and `nwss` carry extra key columns such as `age_group`
+and `pcr_target` that this schema has no field for, and `rvdss` publishes no metadata yet.
+Asking for one names the reason. `fluview` had not moved to V5 as of 2026-09-08, so
+`fetch_fluview` still queries the older API.
+
+`catalog(api = :v5)` lists what V5 serves, in one request:
+
+```julia
+cat = catalog(api = :v5)
+unique(cat.source)
+filter(e -> e.source === :nssp, cat)
+```
+
+V5 entries leave `time_type`, `num_locations`, `min_lag`, and `max_lag` `missing`, because
+the metadata endpoint does not publish them. Call `catalog()` and `catalog(api = :v5)` and
+`vcat` the results to see both, which is how you find what a V4 signal became.
+
+#### Rate limits
+
+V5 is stricter than V4: 60 requests/hour overall, 5/minute on `archive/`, and 3/minute on
+`snapshot/`. Your existing `DELPHI_EPIDATA_KEY` works on V5 with no re-registration, and
+lifts all of them. V5 takes the key in a `token` header rather than HTTP Basic, which
+`v5_transport()` sets for you.
+
 ### Discovering datasets
 
 `catalog` lists what you can fetch, so signal names do not have to come from Delphi's
@@ -135,7 +231,8 @@ tbl = fetch_covidcast(data_source = String(e.source), signal = String(e.signal),
 tbl[1]
 # EpiObservation(:nssp, :pct_ed_visits_covid, COUNTY, "08001",
 #                Date("2026-08-09"), Date("2026-08-15"),
-#                0.15, missing, missing, Date("2026-08-22"), 1, NOT_MISSING)
+#                0.15, missing, missing, missing, missing,
+#                Date("2026-08-22"), 1, :source, NOT_MISSING)
 ```
 
 ```julia
@@ -215,8 +312,11 @@ struct EpiObservation
     value::Union{Float64,Missing}
     stderr::Union{Float64,Missing}
     sample_size::Union{Float64,Missing}
+    ci_lower::Union{Float64,Missing}
+    ci_upper::Union{Float64,Missing}
     issue::Union{Date,Missing}            # when it was published
     lag::Union{Int,Missing}               # periods between period_end and issue
+    fill_method::Symbol                   # :source, :ave, or :zero
     missing_code::MissingCode             # why `value` is absent, when it is
 end
 ```
@@ -225,6 +325,14 @@ end
 weekly one — and stored as the source reported it. `issue - period_end` gives days either
 way, and the schema deliberately does not record the time resolution, so a derived lag
 would be seven times off for weekly signals with nothing to signal the mistake.
+
+`fill_method` records how nulls were handled during geographic aggregation. V5 treats it as
+part of a row's identity, so dropping it would merge rows that upstream keeps apart. V3 and
+V4 rows are always `:source`.
+
+`ci_lower` and `ci_upper` bound a confidence interval. V5 reports uncertainty this way for
+some sources, where V3 and V4 reported `stderr` and `sample_size`. A row carries one pair
+or the other.
 
 
 The schema uses intervals, not a resolution flag. A daily observation is a one-day interval and a
@@ -270,13 +378,16 @@ Reach for `load` when you intend to modify the table, or when it must outlive th
 
 ## Scope
 
-Working now: the `covidcast` and `fluview` endpoints end to end — fetch, retry with
-backoff, standardize, Arrow round-trip — plus `catalog` for discovering what is available,
-all with an offline test suite.
+Working now: the V5 `snapshot` and `archive` endpoints, and the V3/V4 `covidcast` and
+`fluview` endpoints, end to end: fetch, retry with backoff, standardize, Arrow round
+trip. Plus `catalog` over both APIs for discovering what is available, all with an offline
+test suite.
 
-Not yet: `catalog` does not cache, so each call costs a request, and `fetch_covidcast` does
-not check a signal name against it before sending. Also absent: a rate limiter, concurrent
-chunked fetch, and an incremental on-disk cache.
+Not yet: `catalog` does not cache, so each call costs a request, and no fetcher checks a
+signal name against it before sending. V5 sources with extra key columns (`pophive`,
+`nickel_beta`, `nwss`) are refused, because the schema has no field for `age_group` or
+`pcr_target`. Also absent: a rate limiter, concurrent chunked fetch, an incremental
+on-disk cache, and the V5 `aux_data` and `geomap` endpoints.
 
 ## Citation
 
@@ -294,7 +405,7 @@ software as follows:
   title   = {EpiDataKit.jl: Retrieval and standardization of epidemiological surveillance data in Julia},
   author  = {Vader, Sam},
   year    = {2026},
-  version = {0.2.0},
+  version = {0.3.0},
   doi     = {10.5281/zenodo.21848579},
   url     = {https://github.com/svader0/EpiDataKit.jl}
 }

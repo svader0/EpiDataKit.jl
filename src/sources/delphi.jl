@@ -188,6 +188,13 @@ tbl = fetch_covidcast(
 Throws [`NoResultsError`](@ref) when the query was valid but matched nothing, and
 [`TruncatedResultsError`](@ref) when the server capped the result set. See
 [`check_result`](@ref) for why that is an error rather than a warning.
+
+!!! warning "V4 stops gaining data on 2026-09-22"
+    Delphi adds no new data to the `covidcast` endpoint after 2026-09-22. It keeps serving
+    records ingested before then, so this function stays correct for historical work. For
+    current data use [`fetch_snapshot`](@ref) or [`fetch_archive`](@ref), and
+    `catalog(api = :v5)` to find the new signal names. `doctor-visits` is now
+    `claims_outpatient` and `hospital-admissions` is now `claims_inpatient`.
 """
 function fetch_covidcast(;
     transport::AbstractTransport = HTTPTransport(),
@@ -267,6 +274,10 @@ tbl = fetch_fluview(epiweeks = Date(2020, 1, 1):Date(2020, 6, 1), regions = ["na
 Each upstream row carries several measurements, so it becomes several observations
 distinguished by `signal`. See [`standardize`](@ref). `fluview` has no `as_of`; use
 `issues` or `lag` to select a vintage.
+
+!!! note "fluview is still on the older API"
+    `fluview` had not moved to V5 as of 2026-09-08, so this function keeps querying the
+    endpoint it always has. Watch `catalog(api = :v5)` for it to appear.
 """
 function fetch_fluview(;
     transport::AbstractTransport = HTTPTransport(),
