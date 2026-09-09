@@ -77,23 +77,6 @@ function decode_v5(resp::EpiResponse)
 end
 
 """
-    coerce_date(x) -> Union{Date,Missing}
-
-Read a V5 date column. `reference_time` arrives as `YYYY-MM-DD`; `report_time` is a
-timestamp for some sources and a bare date for others, so the clock part is dropped.
-"""
-coerce_date(::Missing) = missing
-coerce_date(::Nothing) = missing
-coerce_date(d::Date) = d
-coerce_date(d::DateTime) = Date(d)
-function coerce_date(s::AbstractString)
-    t = strip(s)
-    isempty(t) && return missing
-    return Date(first(t, 10), dateformat"yyyy-mm-dd")
-end
-coerce_date(::Any) = missing
-
-"""
     infer_time_type(refs) -> Symbol
 
 Decide whether a V5 payload is daily or weekly from its `reference_time` values.
@@ -131,6 +114,9 @@ function standardize(src::DelphiV5, raw; time_type = nothing)
     avail = _colnames(raw)
 
     refs = [coerce_date(_get(row, :reference_time, avail)) for row in rows]
+    if time_type === nothing && length(unique(skipmissing(refs))) < 2
+        @warn "one distinct reference_time; assuming a daily signal. Pass time_type = \"week\" if it is weekly" maxlog = 1
+    end
     tt = time_type === nothing ? infer_time_type(refs) :
          Symbol(lowercase(strip(string(time_type))))
     tt in (:day, :week) ||
@@ -259,8 +245,8 @@ function format_report_time_query(x)
 end
 
 """
-    v5_params(; source, signal, geo_type, snapshot_date = nothing, report_time = nothing,
-                limit = nothing) -> Dict{String,String}
+    v5_params(; source, signal, geo_type, snapshot_date = nothing,
+                report_time = nothing) -> Dict{String,String}
 
 Build and locally validate one V5 query.
 
@@ -270,7 +256,7 @@ accepts `fill_ave` while the column holds `ave`, so the filter matches nothing. 
 are applied by [`filter_observations`](@ref) instead.
 """
 function v5_params(; source, signal, geo_type, snapshot_date = nothing,
-                     report_time = nothing, limit = nothing)
+                     report_time = nothing)
     src = check_v5_source(source)
 
     sig = strip(string(signal))
@@ -280,7 +266,7 @@ function v5_params(; source, signal, geo_type, snapshot_date = nothing,
         "list returns zero rows with no error upstream. Pass a vector of signals instead; " *
         "fetch_snapshot and fetch_archive send one request each and combine the results"))
 
-    parse_geo_level(geo_type)  # throws on an unknown geo_type
+    parse_geo_level(geo_type)
 
     params = Dict{String,String}(
         "source" => String(src),
@@ -290,7 +276,6 @@ function v5_params(; source, signal, geo_type, snapshot_date = nothing,
     )
     snapshot_date === nothing || (params["snapshot_date"] = _v5_date(snapshot_date))
     report_time === nothing || (params["report_time_query"] = format_report_time_query(report_time))
-    limit === nothing || (params["limit"] = string(limit))
     return params
 end
 
@@ -388,7 +373,6 @@ function _fetch_v5(endpoint, transport, signal, time_type, filters; params...)
         raw = try
             decode_v5(resp)
         catch e
-            # One signal of several returning nothing is not a failure of the whole call.
             (e isa NoResultsError && length(signals) > 1) || rethrow()
             nothing
         end
@@ -404,10 +388,9 @@ function _fetch_v5(endpoint, transport, signal, time_type, filters; params...)
     return out
 end
 
-# Accept the V4 spellings epidatr also keeps.
 function _deprecated(new_name::String, old_name::String, old_value, new_value)
     old_value === nothing && return new_value
-    @warn "`$old_name` is the V4 name; V5 calls it `$new_name`"
+    @warn "`$old_name` is the V4 name; V5 calls it `$new_name`" maxlog = 1 _id = Symbol(old_name)
     return old_value
 end
 
@@ -495,7 +478,8 @@ Passing `report_time` asks for revision history, so this calls [`fetch_archive`]
 Anything else calls [`fetch_snapshot`](@ref). Passing both is an error, because they
 name different endpoints rather than different filters.
 """
-function fetch_epidata(; report_time = nothing, snapshot_date = nothing, kwargs...)
+function fetch_epidata(; report_time = nothing, snapshot_date = nothing, issues = nothing, kwargs...)
+    report_time = _deprecated("report_time", "issues", issues, report_time)
     report_time !== nothing && snapshot_date !== nothing && throw(ValidationError(
         "snapshot_date and report_time select different endpoints: snapshot_date is " *
         "fetch_snapshot, report_time is fetch_archive. Pass one"))

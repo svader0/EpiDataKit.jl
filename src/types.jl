@@ -247,7 +247,8 @@ function scrub_secrets(s::AbstractString)
         => s"\1=[REDACTED]")
     out = replace(out, r"(?i)(https?://)[^/@\s]+:[^/@\s]+@" => s"\1[REDACTED]@")
     # An `Authorization: Basic <base64>` value decodes straight back to the key.
-    replace(out, r"(?i)\b(Basic|Bearer)\s+[A-Za-z0-9+/=._~-]+" => s"\1 [REDACTED]")
+    out = replace(out, r"(?i)\b(Basic|Bearer)\s+[A-Za-z0-9+/=._~-]+" => s"\1 [REDACTED]")
+    replace(out, r"(?i)\btoken:\s*[A-Za-z0-9+/=._~-]+" => s"token: [REDACTED]")
 end
 
 """

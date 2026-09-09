@@ -349,8 +349,13 @@ end
         end
 
         @testset "an unknown api is rejected before any request" begin
-            @test_throws ValidationError catalog(api = :v9, transport = MockTransport())
-            @test_throws ValidationError catalog(api = :both, transport = MockTransport())
+            t9 = MockTransport()
+            @test_throws ValidationError catalog(api = :v9, transport = t9)
+            @test isempty(t9.calls)
+
+            tboth = MockTransport()
+            @test_throws ValidationError catalog(api = :both, transport = tboth)
+            @test isempty(tboth.calls)
         end
     end
 end

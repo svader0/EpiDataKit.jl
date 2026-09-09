@@ -49,7 +49,6 @@ end
     @test v5_params(; V5_Q..., snapshot_date = Date(2026, 7, 1))["snapshot_date"] == "2026-07-01"
     @test v5_params(; V5_Q..., snapshot_date = "2026-07-01")["snapshot_date"] == "2026-07-01"
     @test v5_params(; V5_Q..., report_time = Date(2026, 6, 26))["report_time_query"] == "=2026-06-26"
-    @test v5_params(; V5_Q..., limit = 5)["limit"] == "5"
 
     # A comma list is a silent empty response upstream, so refuse it here.
     # Written out rather than overriding a key from V5_Q, which splatting does not promise.

@@ -210,6 +210,12 @@ end
     fetch_epidata(; transport = t2, q...)
     @test startswith(only(t2.calls), V5_ARCHIVE_ENDPOINT)
 
+    q3 = (SNAP_Q..., report_time = Date(2026, 6, 26))
+    t3 = v5_mock(V5_ARCHIVE_ENDPOINT, SNAP_BODY; extra = PAGINATED, q3...)
+    @test_logs (:warn,) match_mode = :any fetch_epidata(; transport = t3,
+        issues = Date(2026, 6, 26), SNAP_Q...)
+    @test startswith(only(t3.calls), V5_ARCHIVE_ENDPOINT)
+
     # Asking for both versioning arguments is a contradiction, not a preference order.
     @test_throws ValidationError fetch_epidata(source = "nssp", signal = "x",
         geo_type = "state", snapshot_date = Date(2026, 7, 1),

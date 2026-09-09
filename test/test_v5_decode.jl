@@ -74,6 +74,12 @@ const V5_ROWS = V5_KEY_HEADER * ",value\n" *
         @test_throws NoResultsError decode_v5(mock_response(bom * V5_KEY_HEADER * ",value\n"))
     end
 
+    @testset "the recorded archive page decodes" begin
+        t = Tables.columntable(decode_v5(mock_response(fixture("v5_archive_success.csv"))))
+        @test !isempty(t.value)
+        @test all(d -> d isa Date, t.reference_time)
+    end
+
     @testset "v5_error_message" begin
         @test v5_error_message("not json") === nothing
         @test v5_error_message("""{"detail":[{"loc":["query","x"],"msg":"bad"}]}""") ==

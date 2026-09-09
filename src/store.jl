@@ -90,8 +90,6 @@ function _open_checked(path::AbstractString)
     return t
 end
 
-# Generation 1 predates these columns. It also predates any imputation, so every row it
-# holds came straight from the publisher.
 _col_or(t, name::Symbol, fallback) =
     name in Tables.columnnames(t) ? Tables.getcolumn(t, name) : fallback
 

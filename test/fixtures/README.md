@@ -87,5 +87,5 @@ purpose. V5 publishes no `time_type`, so `infer_time_type` reads the resolution 
 spacing of `reference_time`, and these two fixtures are what pin both branches of it.
 
 Mind the V5 rate limits, which are tighter than V4's: 60 requests/hour overall, 5/minute
-on `archive/`, and 3/minute on `snapshot/`. One `--write` run costs about 16 requests
-across both APIs.
+on `archive/`, and 3/minute on `snapshot/`. One `--write` run costs 18 requests across
+both APIs: 10 for V4, 6 V5 contracts, and 2 V5 end-to-end calls.

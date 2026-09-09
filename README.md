@@ -197,9 +197,9 @@ the metadata endpoint does not publish them. Call `catalog()` and `catalog(api =
 #### Rate limits
 
 V5 is stricter than V4: 60 requests/hour overall, 5/minute on `archive/`, and 3/minute on
-`snapshot/`. Your existing `DELPHI_EPIDATA_KEY` works on V5 with no re-registration, and
-lifts all of them. V5 takes the key in a `token` header rather than HTTP Basic, which
-`v5_transport()` sets for you.
+`snapshot/`. Delphi's notice says an existing `DELPHI_EPIDATA_KEY` works on V5 without
+re-registration and lifts these limits; this package did not measure that. V5 takes the
+key in a `token` header rather than HTTP Basic, which `v5_transport()` sets for you.
 
 ### Discovering datasets
 

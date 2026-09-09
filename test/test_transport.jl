@@ -50,6 +50,7 @@ using EpiDataKit: canonical_query, request_key, auth_headers, backoff_delay, fet
         @test scrub_secrets("covidcast/?API_KEY=abc&b=1") == "covidcast/?API_KEY=[REDACTED]&b=1"
         @test scrub_secrets("https://user:pw@host/path") == "https://[REDACTED]@host/path"
         @test scrub_secrets("covidcast/?signal=x") == "covidcast/?signal=x"
+        @test scrub_secrets("token: abc123") == "token: [REDACTED]"
     end
 
     @testset "scrub_secrets covers the other credential spellings" begin

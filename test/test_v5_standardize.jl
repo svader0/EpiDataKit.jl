@@ -111,11 +111,13 @@ end
     @testset "the caller can override the inferred resolution" begin
         body = V5_KEY_HEADER * ",value\n" *
                "pct_ed_visits_covid,2026-06-26,state,ak,source,2022-10-01,1.61\n"
-        tbl = standardize(DelphiV5(:nssp), decode_v5(mock_response(body)); time_type = "week")
+        tbl = @test_logs standardize(DelphiV5(:nssp), decode_v5(mock_response(body));
+                                     time_type = "week")
         @test tbl[1].period_start == Date(2022, 9, 25)
 
         # Without the override a single row falls back to daily.
-        tbl2 = standardize(DelphiV5(:nssp), decode_v5(mock_response(body)))
+        tbl2 = @test_logs (:warn,) match_mode = :any standardize(DelphiV5(:nssp),
+                                                                 decode_v5(mock_response(body)))
         @test tbl2[1].period_start == Date(2022, 10, 1)
     end
 

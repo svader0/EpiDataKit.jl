@@ -403,7 +403,6 @@ function main()
     failed, last_resp = run_checks(CHECKS, transport, "api.delphi.cmu.edu")
 
     v5 = v5_transport()
-    # 3 requests/minute on snapshot/.
     v5_failed, _ = run_checks(CHECKS_V5, v5, "delphi.cmu.edu/epidata/v5"; pause = 21)
     failed += v5_failed
 
@@ -477,7 +476,7 @@ function main()
 
     print("  ", rpad("fetch_snapshot end to end", 34))
     try
-        sleep(21)  # stay under the 3 requests/minute snapshot limit
+        sleep(21)
         tbl = fetch_snapshot(source = "nssp", signal = "pct_ed_visits_covid",
                              geo_type = "state", geo_values = "ca",
                              reference_time = Date(2026, 1, 1):Date(2026, 6, 1))

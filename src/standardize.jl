@@ -49,6 +49,23 @@ truncation of anything meaningful.
 """
 coerce_int(x) = (v = coerce_float(x); v === missing ? missing : round(Int, v))
 
+"""
+    coerce_date(x) -> Union{Date,Missing}
+
+Read a V5 date column. `reference_time` arrives as `YYYY-MM-DD`; `report_time` is a
+timestamp for some sources and a bare date for others, so the clock part is dropped.
+"""
+coerce_date(::Missing) = missing
+coerce_date(::Nothing) = missing
+coerce_date(d::Date) = d
+coerce_date(d::DateTime) = Date(d)
+function coerce_date(s::AbstractString)
+    t = strip(s)
+    isempty(t) && return missing
+    return Date(first(t, 10), dateformat"yyyy-mm-dd")
+end
+coerce_date(::Any) = missing
+
 # Column access tolerating an absent field, since these APIs omit keys rather than sending
 # nulls. A source declaring a `Tables.schema` guarantees every row has every column, so the
 # name set is computed once; schemaless JSON guarantees nothing, and taking the first row's
