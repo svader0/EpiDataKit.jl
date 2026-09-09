@@ -209,8 +209,6 @@ function _warn_low_quota(resp::EpiResponse)
     return nothing
 end
 
-# A paginated `Link` header names an absolute URL. The key travels only to the base URL's
-# own host, on the base URL's own scheme, so a cleartext or off-host link cannot carry it.
 function _same_host_url(t::HTTPTransport, url::AbstractString)
     base = HTTP.URI(t.base_url)
     u = HTTP.URI(url)

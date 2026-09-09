@@ -314,7 +314,6 @@ end
         @test :pct_ed_visits_covid in cat.signal
         @test all(e -> e.fetch_with === :fetch_snapshot, cat)
 
-        # metadata/ publishes no resolution, so this column is missing rather than guessed.
         @test all(e -> e.time_type === missing, cat)
         @test all(e -> e.num_locations === missing, cat)
 
@@ -325,11 +324,9 @@ end
         @test all(e -> e.last_period >= e.first_period, nssp)
         @test all(e -> e.last_issue isa Date, nssp)
 
-        # Only the sources this package can actually fetch belong in the catalog.
         @test all(s -> s in V5_SOURCES, unique(cat.source))
         @test :pophive ∉ cat.source
         @test :nwss ∉ cat.source
-        # rvdss publishes null for every field; it must be skipped, not crash the parse.
         @test :rvdss ∉ cat.source
 
         @testset "catalog(api = :v5) makes one request" begin
@@ -344,7 +341,6 @@ end
             @test all(e -> e.source === :nssp && e.geo_level == STATE, c2)
             @test_throws NoResultsError catalog(api = :v5, source = "nssp",
                                                 signal = "nope", transport = t)
-            # V5 publishes no resolution, so a time_type filter can never match a V5 entry.
             @test_throws NoResultsError catalog(api = :v5, time_type = "week", transport = t)
         end
 

@@ -1,14 +1,10 @@
-# Measured against the live V5 API on 2026-09-08. See
-# docs/superpowers/specs/2026-09-08-epidata-v5.md for the full record.
+# Measured against the live V5 API on 2026-09-08:
 #
 #   success             200  text/csv, key header + value columns + rows
-#   no rows             200  *header line only*. How an unknown signal, an unknown
-#                            geo_type, and a comma separated signal list all answer
+#   no rows             200  *header line only*, also for an unknown signal, an unknown
+#                            geo_type, and a comma separated signal list
 #   bad parameter       422  JSON {"detail": [{"type", "loc", "msg", "input"}]}
 #   unknown endpoint    404  HTML
-#
-# There is no `result` code anywhere and no truncation code. Two of the failure modes are
-# silent 200s, which is why v5_params validates locally before sending.
 
 """
 The first six columns of every V5 CSV response, in order. The value columns that follow
@@ -54,8 +50,6 @@ function decode_v5(resp::EpiResponse)
     body = body_string(resp)
     stripped = strip(lstrip(body, '﻿'))
 
-    # V4 used an empty body for "no rows". V5 always sends the header, so an empty body
-    # here means the response was cut short.
     isempty(stripped) && throw(TransportError(resp.request, resp.status, ""))
 
     msg = v5_error_message(stripped)
@@ -182,7 +176,6 @@ const V5_UNSUPPORTED_SOURCES = Dict{Symbol,String}(
     :nssp_no_diff => "it is an internal variant of nssp; use source = \"nssp\"",
 )
 
-# V4 names a caller is likely to still be typing, and where each one went.
 const V5_RENAMED_SOURCES = Dict{Symbol,String}(
     Symbol("doctor-visits") => "claims_outpatient",
     :doctor_visits => "claims_outpatient",
@@ -279,8 +272,6 @@ function v5_params(; source, signal, geo_type, snapshot_date = nothing,
     return params
 end
 
-# The query parameter spells these `fill_ave` and `fill_zero`; the column holds `ave` and
-# `zero`. Accept either spelling from a caller.
 const V5_FILL_ALIASES = Dict(:fill_ave => :ave, :fill_zero => :zero, :source => :source,
                              :ave => :ave, :zero => :zero)
 
@@ -341,8 +332,6 @@ end
 _signal_list(signal) = signal isa AbstractString || signal isa Symbol ?
                        [string(signal)] : [string(s) for s in signal]
 
-# `next_link` hands back an absolute URL, and the pages after the first carry no header
-# line, so they concatenate onto the first page's body as raw CSV.
 function _fetch_v5_body(transport, endpoint, params, paginate::Bool)
     resp = fetch_raw(transport, endpoint, paginate ?
                      merge(params, Dict("use_pagination" => "true")) : params)

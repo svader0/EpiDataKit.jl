@@ -4,8 +4,6 @@ using EpiDataKit: fetch_snapshot, fetch_archive, fetch_epidata, v5_params, reque
                   mock_response, V5_KEY_HEADER, V5_SNAPSHOT_ENDPOINT, V5_ARCHIVE_ENDPOINT,
                   NoResultsError, ValidationError, TransportError, EpidataError
 
-# Build a MockTransport that answers exactly the request the fetcher should make.
-# `fetch_archive` adds use_pagination=true, so archive mocks pass it in `extra`.
 function v5_mock(endpoint, body; status = 200, headers = Dict{String,String}(),
                  extra = Dict{String,String}(), kwargs...)
     key = request_key(endpoint, merge(v5_params(; kwargs...), extra))
@@ -41,7 +39,6 @@ const SNAP_Q = (source = "nssp", signal = "pct_ed_visits_covid", geo_type = "sta
 
         @test length(tbl) == 2
         @test all(o -> o.geo_id == "ca", tbl)
-        # The request itself must be unfiltered: V5 has no geo_value parameter.
         @test !occursin("geo_value=", only(t.calls))
         @test !occursin("time_values=", only(t.calls))
     end
@@ -136,7 +133,6 @@ end
         tbl = fetch_archive(; transport = t, q...)
 
         @test length(tbl) == 3
-        # Same period, two issues: that is the point of the archive.
         same = filter(o -> o.period_end == Date(2022, 10, 1), collect(tbl))
         @test Set(o.issue for o in same) == Set([Date(2026, 6, 26), Date(2026, 7, 1)])
     end
@@ -156,8 +152,6 @@ end
 
         key = request_key(V5_ARCHIVE_ENDPOINT, merge(v5_params(; q...), PAGINATED))
         nxt = "https://delphi.cmu.edu/epidata/v5/archive/?page=2&header=false"
-        # The next page is fetched with the absolute URL as the endpoint and no params,
-        # so its key is what request_key makes of exactly that.
         nxt_key = request_key(nxt, Dict{String,String}())
         t = MockTransport(Dict(
             key => mock_response(page1; headers = Dict("Link" => "<$nxt>; rel=\"next\""),
@@ -216,7 +210,6 @@ end
         issues = Date(2026, 6, 26), SNAP_Q...)
     @test startswith(only(t3.calls), V5_ARCHIVE_ENDPOINT)
 
-    # Asking for both versioning arguments is a contradiction, not a preference order.
     @test_throws ValidationError fetch_epidata(source = "nssp", signal = "x",
         geo_type = "state", snapshot_date = Date(2026, 7, 1),
         report_time = Date(2026, 6, 26), transport = MockTransport())
@@ -232,7 +225,6 @@ end
         @test !isempty(tbl)
         @test all(o -> o.source === :nssp, tbl)
         @test all(o -> o.geo_level == STATE, tbl)
-        # nssp is weekly. If this fails, infer_time_type read the recorded spacing wrong.
         @test all(o -> o.period_end - o.period_start == Day(6), tbl)
         @test all(o -> dayofweek(o.period_end) == 6, tbl)
         @test all(o -> o.fill_method === :source, tbl)
@@ -252,7 +244,6 @@ end
 
         @test any(o -> o.ci_lower !== missing, tbl)
         @test all(o -> o.ci_lower === missing || o.ci_lower <= o.value <= o.ci_upper, tbl)
-        # sleepcycle is daily.
         @test all(o -> o.period_start == o.period_end, tbl)
     end
 

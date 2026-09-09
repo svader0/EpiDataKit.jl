@@ -249,7 +249,6 @@ end
     @test o.missing_code === NOT_MISSING
     @test fieldcount(EpiObservation) == 15
 
-    # The keyword constructor and the positional one must agree.
     p = EpiObservation(:nssp, :pct_ed_visits_covid, STATE, "ca",
                        Date(2026, 5, 17), Date(2026, 5, 23),
                        0.07, missing, missing, missing, missing,
@@ -257,7 +256,6 @@ end
     @test o == p
     @test hash(o) == hash(p)
 
-    # V4 rows carry fill_method = :source, because V4 did no imputation.
     body = "geo_value,signal,source,geo_type,time_type,time_value,direction,issue,lag," *
            "missing_value,missing_stderr,missing_sample_size,value,stderr,sample_size\n" *
            "ca,pct_ed_visits_covid,nssp,state,week,202620,,202630,10,0,1,1,0.07,,\n"

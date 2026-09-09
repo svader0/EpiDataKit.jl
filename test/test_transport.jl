@@ -169,11 +169,9 @@ using EpiDataKit: canonical_query, request_key, auth_headers, backoff_delay, fet
         @test EpiDataKit.next_link(r) == url
 
         @test EpiDataKit.next_link(mock_response("x")) === nothing
-        # A Link header that is not a next page must not be followed.
         @test EpiDataKit.next_link(
             mock_response("x"; headers = Dict("Link" => "<$url>; rel=\"prev\""))) === nothing
 
-        # RFC 8288 lets parameters come in any order, and lets a header carry several links.
         @test EpiDataKit.next_link(mock_response("x"; headers = Dict(
             "Link" => "<$url>; type=\"text/csv\"; rel=\"next\""))) == url
         @test EpiDataKit.next_link(mock_response("x"; headers = Dict(
@@ -188,7 +186,6 @@ using EpiDataKit: canonical_query, request_key, auth_headers, backoff_delay, fet
 
     @testset "_same_host_url" begin
         t = EpiDataKit.v5_transport(api_key = "k")
-        # The live Link header is http://; the key must not follow it in cleartext.
         @test EpiDataKit._same_host_url(t, "http://delphi.cmu.edu/epidata/v5/archive/?page=2&header=false") ==
               "https://delphi.cmu.edu/epidata/v5/archive/?page=2&header=false"
         @test_throws EpiDataKit.TransportError EpiDataKit._same_host_url(t, "https://example.org/x")

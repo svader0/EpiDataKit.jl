@@ -229,11 +229,9 @@ const CHECKS_V5 = [
                 push!(problems, "expected a CSV body, got an empty one")
                 return problems
             end
-            # decode_v5 gates a 200 body on this prefix.
             startswith(strip(lines[1]), V5_KEY_HEADER) ||
                 push!(problems, "key header changed\n      expected prefix: $V5_KEY_HEADER\n      got: $(strip(lines[1]))")
             length(lines) >= 2 || push!(problems, "expected at least one data row, got header only")
-            # nssp is weekly, and every weekly reference_time observed is a Saturday.
             if length(lines) >= 2
                 cols = split(strip(lines[2]), ',')
                 length(cols) >= 6 || push!(problems, "row has fewer than 6 key columns")
@@ -255,9 +253,6 @@ const CHECKS_V5 = [
                       "geo_type" => "state", "format" => "csv"),
         check = function (resp)
             problems = String[]
-            # The whole no-rows contract: a 200 whose body is the header and nothing else.
-            # If this ever becomes an error status or an empty body, decode_v5's last two
-            # branches are wrong.
             resp.status == 200 || push!(problems, "expected status 200, got $(resp.status)")
             body = strip(body_string(resp))
             startswith(body, V5_KEY_HEADER) ||
@@ -337,7 +332,6 @@ const CHECKS_V5 = [
                     haskey(obj.nssp, f) ||
                         push!(problems, "nssp metadata is missing the `$f` field")
                 end
-                # A source gaining extra key columns means its rows no longer fit the schema.
                 ek = get(obj.nssp, :extra_key_columns, nothing)
                 ek === nothing || isempty(ek) ||
                     push!(problems, "nssp gained extra key columns: $ek")

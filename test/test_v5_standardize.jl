@@ -6,14 +6,11 @@ using EpiDataKit: DelphiV5, decode_v5, infer_time_type, standardize, mock_respon
     @test infer_time_type([Date(2022, 10, 1), Date(2022, 10, 8), Date(2022, 10, 15)]) === :week
     @test infer_time_type([Date(2019, 10, 8), Date(2019, 10, 9)]) === :day
 
-    # A gap in the middle must not change the answer. The smallest positive gap decides.
     @test infer_time_type([Date(2022, 10, 1), Date(2022, 10, 8), Date(2022, 10, 29)]) === :week
     @test infer_time_type([Date(2019, 10, 8), Date(2019, 10, 9), Date(2019, 11, 1)]) === :day
 
-    # Unsorted and duplicated input still works.
     @test infer_time_type([Date(2022, 10, 8), Date(2022, 10, 1), Date(2022, 10, 8)]) === :week
 
-    # Too little to tell: fall back to daily.
     @test infer_time_type([Date(2022, 10, 1)]) === :day
     @test infer_time_type(Date[]) === :day
 end
@@ -39,7 +36,6 @@ end
         @test tbl[1].signal === :pct_ed_visits_covid
         @test tbl[1].geo_level == STATE
         @test tbl[1].geo_id == "ak"
-        # reference_time is the MMWR week-ending Saturday.
         @test tbl[1].period_end == Date(2022, 10, 1)
         @test tbl[1].period_start == Date(2022, 9, 25)
         @test tbl[1].period_end - tbl[1].period_start == Day(6)
@@ -49,7 +45,6 @@ end
         @test tbl[1].stderr === missing
         @test tbl[1].ci_lower === missing
         @test tbl[1].missing_code === NOT_MISSING
-        # lag counts whole weeks for a weekly signal.
         @test tbl[1].lag == div(Dates.value(Date(2026, 6, 26) - Date(2022, 10, 1)), 7)
     end
 
@@ -115,7 +110,6 @@ end
                                      time_type = "week")
         @test tbl[1].period_start == Date(2022, 9, 25)
 
-        # Without the override a single row falls back to daily.
         tbl2 = @test_logs (:warn,) match_mode = :any standardize(DelphiV5(:nssp),
                                                                  decode_v5(mock_response(body)))
         @test tbl2[1].period_start == Date(2022, 10, 1)

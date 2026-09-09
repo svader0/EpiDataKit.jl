@@ -67,8 +67,6 @@ function provenance(path::AbstractString)
             schema = get2("epidatakit.schema"))
 end
 
-# Columns a generation 1 file carries. A file missing any of these is not ours; a file
-# missing only the generation 2 additions is, and gets them filled in.
 const V1_COLUMNS = (:source, :signal, :geo_level, :geo_id, :period_start, :period_end,
                     :value, :stderr, :sample_size, :issue, :lag, :missing_code)
 
@@ -176,8 +174,6 @@ Base.size(v::EnumView) = size(v.data)
 Base.IndexStyle(::Type{<:EnumView}) = IndexLinear()
 Base.@propagate_inbounds Base.getindex(v::EnumView{T}, i::Int) where {T} = T(Int(v.data[i]))
 
-# `scan` must not allocate a column per row for a generation 1 file, which is the whole
-# point of memory-mapping it.
 struct ConstView{T} <: AbstractVector{T}
     value::T
     len::Int

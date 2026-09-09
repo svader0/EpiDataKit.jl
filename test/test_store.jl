@@ -297,7 +297,6 @@ end
     end
 
     @testset "a v1 file still loads" begin
-        # Written the way v0.2.0 wrote it: 12 columns, no ci bounds, no fill_method.
         path = joinpath(mktempdir(), "v1.arrow")
         Arrow.write(path, (
             source = [:nssp], signal = [:pct_ed_visits_covid],

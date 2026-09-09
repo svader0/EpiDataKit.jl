@@ -16,15 +16,11 @@ const V5_ROWS = V5_KEY_HEADER * ",value\n" *
     end
 
     @testset "a header-only body means no rows" begin
-        # This is how V5 answers an unknown signal, an unknown geo_type, and a comma
-        # separated signal list. All three are 200s, so nothing else catches them.
         @test_throws NoResultsError decode_v5(mock_response(V5_KEY_HEADER * ",value\n"))
         @test_throws NoResultsError decode_v5(mock_response(V5_KEY_HEADER * ",value"))
     end
 
     @testset "an empty body is a transport failure, not no-rows" begin
-        # V4 used an empty body for no-rows. V5 does not, so an empty body here means
-        # something truncated the response.
         @test_throws TransportError decode_v5(mock_response(""))
         @test_throws TransportError decode_v5(mock_response(""; status = 500))
     end
