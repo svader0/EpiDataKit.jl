@@ -277,7 +277,9 @@ distinguished by `signal`. See [`standardize`](@ref). `fluview` has no `as_of`; 
 
 !!! note "fluview is still on the older API"
     `fluview` had not moved to V5 as of 2026-09-08, so this function keeps querying the
-    endpoint it always has. Watch `catalog(api = :v5)` for it to appear.
+    endpoint it always has. Delphi stops adding data to that endpoint on 2026-09-22 as
+    well, so it stays correct for historical work. Watch `catalog(api = :v5)` for fluview
+    to appear.
 """
 function fetch_fluview(;
     transport::AbstractTransport = HTTPTransport(),

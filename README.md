@@ -50,13 +50,13 @@ The table is a Tables.jl source, so it goes straight into a `DataFrame` when you
 using DataFrames
 
 df = DataFrame(tbl; copycols=false)
-# 2×11 DataFrame
+# 2×15 DataFrame
 #  Row │ source  signal               geo_level  geo_id  period_start  period_end  v ⋯
 #      │ Symbol  Symbol               GeoLevel   String  Dates.Date    Dates.Date  F ⋯
 # ─────┼──────────────────────────────────────────────────────────────────────────────
 #    1 │ nssp    pct_ed_visits_covid  STATE      ca      2026-05-17    2026-05-23    ⋯
 #    2 │ nssp    pct_ed_visits_covid  STATE      ca      2026-05-24    2026-05-30    ⋯
-#                                                                    5 columns omitted
+#                                                                    9 columns omitted
 ```
 
 Weekly signals accept real dates, so you never have to compute an epiweek by hand:
@@ -126,7 +126,7 @@ tbl = fetch_snapshot(
 The result is the same `EpiObservation` schema, so V4 and V5 tables still combine:
 
 ```julia
-EpiDataKit.save(vcat(old, tbl), "combined.arrow")
+EpiDataKit.save(vcat(flu, tbl), "combined.arrow")
 ```
 
 **One request returns everything.** V5 removed `geo_value` and `time_values` from the wire,
@@ -180,8 +180,7 @@ Working: `nssp`, `nhsn`, `claims_outpatient`, `claims_inpatient`, `nchs_mortalit
 
 Not yet: `pophive`, `nickel_beta`, and `nwss` carry extra key columns such as `age_group`
 and `pcr_target` that this schema has no field for, and `rvdss` publishes no metadata yet.
-Asking for one names the reason. `fluview` had not moved to V5 as of 2026-09-08, so
-`fetch_fluview` still queries the older API.
+Asking for one names the reason. `fluview` had not moved to V5 as of 2026-09-08, so `fetch_fluview` still queries the older API. That API stops gaining data on 2026-09-22 too, so it stays correct for historical work.
 
 `catalog(api = :v5)` lists what V5 serves, in one request:
 
