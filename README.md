@@ -107,11 +107,11 @@ all = vcat(tbl, flu)
 EpiDataKit.save(all, "combined.arrow")
 ```
 
-### Epidata V5
+### Epidata API V5
 
-Delphi stops adding new data to the older API on 2026-09-22. New data lands only in
+Delphi is retiring V4 of the API on 2026-09-22. New data lands only in
 [Epidata V5](https://cmu-delphi.github.io/delphi-epidata/api/v5.html), which is a different
-host with a different shape. `fetch_snapshot` is the V5 counterpart of `fetch_covidcast`:
+host and thus, looks a little different. `fetch_snapshot` is the V5 counterpart of `fetch_covidcast`:
 
 ```julia
 tbl = fetch_snapshot(
