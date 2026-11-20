@@ -69,6 +69,10 @@ const V5_HEADER = "signal,report_time,geo_type,geo_value,fill_method,reference_t
         @test_throws ValidationError fetch_snapshot(; V5Q..., geo_type = "planet", transport = t)
         @test_throws ValidationError fetch_archive(; V5Q..., report_time = Date(2026, 10, 1),
                                                    transport = t)
+        # Each endpoint rejects the other's keyword, which the server would 422.
+        @test_throws MethodError fetch_snapshot(; V5Q..., report_time = ">=2026-10-01", transport = t)
+        @test_throws MethodError fetch_archive(; V5Q..., snapshot_date = Date(2026, 10, 1),
+                                               transport = t)
         @test isempty(t.calls)
     end
 

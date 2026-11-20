@@ -202,8 +202,12 @@ result (a metadata lookup, to turn a misspelled signal or `geo_type` into a
 [`ValidationError`](@ref) listing the real ones; otherwise [`NoResultsError`](@ref) stands)
 and a result with a single reference date (to tell a weekly signal from a daily one).
 """
-function fetch_snapshot(; transport::AbstractTransport = HTTPTransport(), kwargs...)
-    return _fetch_v5(transport, V5_SNAPSHOT_ENDPOINT, v5_params(; kwargs...))
+function fetch_snapshot(; source, signal, geo_type, geo_values = nothing,
+                        reference_times = nothing, fill_method = nothing, age_group = nothing,
+                        snapshot_date = nothing, transport::AbstractTransport = HTTPTransport())
+    params = v5_params(; source, signal, geo_type, geo_values, reference_times, fill_method,
+                       age_group, snapshot_date)
+    return _fetch_v5(transport, V5_SNAPSHOT_ENDPOINT, params)
 end
 
 """
@@ -216,6 +220,10 @@ issues with an expression such as `">=2026-10-01"` or a date range; a bare `Date
 rejected because a report time is a timestamp. The other keywords, and the extra-request
 cases, are as in [`fetch_snapshot`](@ref).
 """
-function fetch_archive(; transport::AbstractTransport = HTTPTransport(), kwargs...)
-    return _fetch_v5(transport, V5_ARCHIVE_ENDPOINT, v5_params(; kwargs...))
+function fetch_archive(; source, signal, geo_type, geo_values = nothing,
+                       reference_times = nothing, fill_method = nothing, age_group = nothing,
+                       report_time = nothing, transport::AbstractTransport = HTTPTransport())
+    params = v5_params(; source, signal, geo_type, geo_values, reference_times, fill_method,
+                       age_group, report_time)
+    return _fetch_v5(transport, V5_ARCHIVE_ENDPOINT, params)
 end

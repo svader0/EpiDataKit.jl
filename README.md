@@ -105,12 +105,6 @@ flu = fetch_fluview(
     regions  = ["nat", "hhs1"],
 )
 
-# After the V3 cutoff, use V5; strata such as age_group are selected explicitly.
-flu = fetch_snapshot(
-    source = "fluview_ilinet", signal = "num_ili", geo_type = "nation",
-    reference_times = Date(2026, 9, 1):Date(2026, 9, 30), age_group = "all",
-)
-
 unique(flu.signal)
 # [:wili, :ili, :num_ili, :num_patients, :num_providers, :num_age_0, …]
 ```
@@ -119,6 +113,16 @@ FluView reports several measurements per region-week, and the schema holds one v
 row, so each upstream row becomes several observations distinguished by `signal`. For
 `wili` and `ili` — percentages — `sample_size` carries `num_patients`, the denominator they
 are computed from.
+
+After the V3 cutoff, use V5. It has one signal per request, and strata such as `age_group`
+are selected explicitly:
+
+```julia
+flu5 = fetch_snapshot(
+    source = "fluview_ilinet", signal = "num_ili", geo_type = "nation",
+    reference_times = Date(2026, 9, 1):Date(2026, 9, 30), age_group = "all",
+)
+```
 
 Both endpoints produce the same schema, so results combine without special-casing:
 
@@ -247,7 +251,7 @@ struct EpiObservation
     stderr::Union{Float64,Missing}
     sample_size::Union{Float64,Missing}
     issue::Union{Date,Missing}            # when it was published
-    lag::Union{Int,Missing}               # periods between period_end and issue
+    lag::Union{Int,Missing}               # issue - period_start, in the signal's own units
     missing_code::MissingCode             # why `value` is absent, when it is
     fill_method::Union{String,Missing}    # V5 only
     age_group::Union{String,Missing}      # V5 only
