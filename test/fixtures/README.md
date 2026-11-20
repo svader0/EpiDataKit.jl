@@ -88,3 +88,14 @@ Recorded 2026-11-20, same host.
 | `v5_archive_success.csv` | 200 | `source=nssp&signal=pct_ed_visits_covid&geo_type=state&geo_value=ca&reference_times=2026-09-01:2026-10-31&report_time_query=>=2026-10-01&format=csv` — several reference dates appear under more than one `report_time` |
 
 V5 rows carry no `source` column and no time resolution, so neither is recoverable from a fixture.
+
+### `v5/metadata/`
+
+Recorded 2026-11-20, same host.
+
+| File | Status | Query |
+|---|---|---|
+| `v5_metadata.json` | 200 | none — the whole object, one key per source, about 28 KB |
+
+Tests derive their expectations from this file rather than hardcoding source or signal
+counts, since the set of sources changes upstream.

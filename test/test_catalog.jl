@@ -4,12 +4,19 @@ using EpiDataKit: empty_catalog, DelphiCovidcastMeta, COVIDCAST_META_ENDPOINT,
                   COVIDCAST_META_CSV_HEADER, csv_header, endpoint, catalog_params,
                   catalog_entries, coerce_int, decode_response, mock_response,
                   fluview_catalog_entries, FLUVIEW_GEO_LEVELS, FLUVIEW_MEASURES, fluview_geo,
-                  catalog, request_key
+                  catalog, request_key, v5_catalog_entries, V5_METADATA_ENDPOINT
+using JSON3
+
+const V5_META = JSON3.read(fixture("v5_metadata.json"))
+v5_count(pred = _ -> true) = count(pred, v5_catalog_entries(V5_META))
 
 function mock_for_catalog(body; status = 200, kwargs...)
     params = catalog_params(; kwargs...)
     key = request_key(COVIDCAST_META_ENDPOINT, params)
-    return MockTransport(Dict(key => mock_response(body; status = status, request = key)))
+    v5key = request_key(V5_METADATA_ENDPOINT, Dict{String,String}())
+    return MockTransport(Dict(
+        key => mock_response(body; status = status, request = key),
+        v5key => mock_response(fixture("v5_metadata.json"); request = v5key)))
 end
 
 @testset "catalog" begin
@@ -186,14 +193,48 @@ end
         cat = catalog(; transport = t)
 
         @test cat isa CatalogTable
-        # 13 covidcast rows from the fixture, plus the 44 static fluview rows.
-        @test length(cat) == 57
-        @test Set(cat.source) == Set([:chng, :nssp, :fluview])
-        @test Set(cat.fetch_with) == Set([:fetch_covidcast, :fetch_fluview])
-        @test length(t.calls) == 1
-        @test startswith(only(t.calls), COVIDCAST_META_ENDPOINT)
-        @test occursin("format=csv", only(t.calls))
-        @test !occursin("api_key", only(t.calls))
+        # 13 covidcast rows from the fixture, 44 static fluview rows, and the V5 half.
+        @test length(cat) == 57 + v5_count()
+        @test Set(cat.source) ⊇ Set([:chng, :nssp, :fluview])
+        @test length(t.calls) == 2
+        @test startswith(t.calls[1], COVIDCAST_META_ENDPOINT)
+        @test startswith(t.calls[2], V5_METADATA_ENDPOINT)
+        @test occursin("format=csv", t.calls[1])
+        @test !occursin("api_key", t.calls[1])
+    end
+
+    @testset "V5 metadata becomes catalog entries" begin
+        cat = v5_catalog_entries(V5_META)
+        nssp = cat[findall(==(:nssp), cat.source)]
+        claims = cat[findall(==(:claims_outpatient), cat.source)]
+
+        @test cat isa CatalogTable
+        @test length(nssp) == length(V5_META.nssp.signals) * length(V5_META.nssp.geo_types)
+        @test all(==(:week), nssp.time_type)
+        @test all(==(:day), claims.time_type)
+        @test :nwss ∉ cat.source
+        @test all(==(:fetch_snapshot), cat.fetch_with)
+        @test all(==(Date(V5_META.nssp.report_time_range.latest[1:10])), nssp.last_issue)
+        @test all(==(Date(V5_META.nssp.reference_time_range.first) - Day(6)), nssp.first_period)
+        @test all(==(Date(V5_META.nssp.reference_time_range.latest)), nssp.last_period)
+        @test all(ismissing, cat.num_locations)
+        @test all(ismissing, cat.min_lag)
+        @test all(ismissing, cat.max_lag)
+    end
+
+    @testset "catalog lists all three halves" begin
+        cat = catalog(; transport = mock_for_catalog(fixture("covidcast_meta_success.csv")))
+        @test Set(cat.fetch_with) == Set([:fetch_covidcast, :fetch_fluview, :fetch_snapshot])
+    end
+
+    @testset "a V5-only source" begin
+        t = mock_for_catalog(fixture("covidcast_noresults.csv");
+                             source = "fluview_ilinet")
+        cat = catalog(; transport = t, source = "fluview_ilinet")
+
+        @test !isempty(cat)
+        @test all(==(:fluview_ilinet), cat.source)
+        @test all(==(:fetch_snapshot), cat.fetch_with)
     end
 
     @testset "a geo_type filter narrows the result, not the request" begin
@@ -201,9 +242,9 @@ end
         cat = catalog(; transport = t, geo_type = "nation")
 
         @test all(==(NATION), cat.geo_level)
-        # 2 covidcast nation rows (chng, nssp) + 11 fluview measures at NATION.
-        @test length(cat) == 13
-        @test !occursin("geo_types", only(t.calls))
+        # 2 covidcast nation rows (chng, nssp) + 11 fluview measures at NATION + V5.
+        @test length(cat) == 13 + v5_count(e -> e.geo_level == NATION)
+        @test !occursin("geo_types", t.calls[1])
 
         t2 = mock_for_catalog(fixture("covidcast_meta_success.csv"); geo_type = "hhs_region")
         @test Set(catalog(; transport = t2, geo_type = "hhs_region").geo_level) ==
@@ -214,19 +255,19 @@ end
         t = mock_for_catalog(fixture("covidcast_meta_success.csv"); time_type = "day")
         cat = catalog(; transport = t, time_type = "day")
 
-        @test occursin("time_types=day", only(t.calls))
+        @test occursin("time_types=day", t.calls[1])
         @test all(==(:day), cat.time_type)
         @test :fluview ∉ cat.source                    # every fluview signal is weekly
-        @test length(cat) == 6
+        @test length(cat) == 6 + v5_count(e -> e.time_type === :day)
     end
 
     @testset "a signal without a source is filtered locally" begin
         t = mock_for_catalog(fixture("covidcast_meta_success.csv"); signal = "wili")
         cat = catalog(; transport = t, signal = "wili")
 
-        @test !occursin("signals", only(t.calls))
+        @test !occursin("signals", t.calls[1])
         @test all(==(:wili), cat.signal)
-        @test length(cat) == length(FLUVIEW_GEO_LEVELS)
+        @test length(cat) == length(FLUVIEW_GEO_LEVELS) + v5_count(e -> e.signal === :wili)
     end
 
     @testset "a wildcard signal behaves like no signal filter" begin
@@ -236,7 +277,7 @@ end
         t2 = mock_for_catalog(fixture("covidcast_meta_success.csv"); source = "nssp")
         starred = catalog(; transport = t2, source = "nssp", signal = "*")
 
-        @test only(t2.calls) == only(t1.calls)
+        @test t2.calls == t1.calls
         @test starred.signal == plain.signal
         @test starred.time_type == plain.time_type
         @test starred.geo_level == plain.geo_level
@@ -254,6 +295,12 @@ end
         @test isempty(t.calls)
         @test length(cat) == 44
         @test all(==(:fluview), cat.source)
+    end
+
+    @testset "fluview still costs nothing" begin
+        t = MockTransport()
+        catalog(; source = "fluview", transport = t)
+        @test isempty(t.calls)
     end
 
     @testset "a fluview-only query that matches nothing names no request" begin
@@ -276,7 +323,8 @@ end
         t = mock_for_catalog(fixture("covidcast_noresults.csv"); geo_type = "census_division")
         cat = catalog(; transport = t, geo_type = "census_division")
 
-        @test length(cat) == length(FLUVIEW_MEASURES)
+        @test length(cat) == length(FLUVIEW_MEASURES) +
+                             v5_count(e -> e.geo_level == CENSUS_DIVISION)
         @test all(==(CENSUS_DIVISION), cat.geo_level)
     end
 

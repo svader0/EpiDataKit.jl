@@ -148,6 +148,20 @@ covid[1]
 #              Date("2026-08-22"), 1, 203, :fetch_covidcast)
 ```
 
+V5 entries name `:fetch_snapshot`. V5 metadata gives one date range per source, so every signal
+inherits it and `num_locations`, `min_lag` and `max_lag` are `missing`:
+
+```julia
+v5 = filter(e -> e.fetch_with === :fetch_snapshot, cat)
+v5[1]
+# CatalogEntry(:nssp, :pct_ed_visits_ari, :week, CENSUS_DIVISION,
+#              Date("2022-09-25"), Date("2026-11-14"), missing,
+#              Date("2026-11-18"), missing, missing, :fetch_snapshot)
+```
+
+An unfiltered `catalog()` makes two requests, one to `covidcast_meta` and one to V5
+`metadata/`; `catalog(source = "fluview")` makes none.
+
 `fetch_with` names the function to call, as a `Symbol`, so you map it to the actual function
 by hand:
 
