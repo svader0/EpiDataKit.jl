@@ -21,10 +21,10 @@ instantiate: ## Install the package dependencies
 test: ## Run the test suite (offline — never touches the network)
 	$(JULIA) $(PROJECT) -e 'using Pkg; Pkg.test()'
 
-check-upstream: ## Report whether Delphi still matches test/fixtures/ (network; ~20 requests)
+check-upstream: ## Report whether Delphi still matches test/fixtures/ (network; ~21 requests)
 	$(JULIA) $(PROJECT) scripts/check_upstream.jl
 
-record-fixtures: ## Re-record test/fixtures/ from the live API (network; ~20 requests)
+record-fixtures: ## Re-record test/fixtures/ from the live API (network; ~21 requests)
 	$(JULIA) $(PROJECT) scripts/check_upstream.jl --write
 
 bench: ## Storage size and reload benchmark (bench/ has its own project)
