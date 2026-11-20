@@ -61,7 +61,7 @@ A response that is not upstream speaking — a 429 from the rate limit, or a 5xx
 balancer — is never recorded, so a bad moment cannot overwrite a good fixture with an
 error page.
 
-Mind the anonymous rate limit of 60 requests/hour; each run costs 21 requests — 15 contract
+Mind the anonymous rate limit of 60 requests/hour; each run costs 22 requests — 16 contract
 checks plus 6 end-to-end requests (`catalog()` makes two).
 
 ## V5 — endpoint `v5/snapshot/`
@@ -96,6 +96,7 @@ Recorded 2026-11-20, same host.
 | File | Status | Query |
 |---|---|---|
 | `v5_metadata.json` | 200 | none — the whole object, one key per source, about 28 KB |
+| `v5_reference_times.json` | 200 | endpoint `v5/metadata/reference_times/`: `source=nssp&signal=pct_ed_visits_covid` — `{"reference_times": […]}`, 216 dates, every one a Saturday |
 
-Tests derive their expectations from this file rather than hardcoding source or signal
+Tests derive their expectations from `v5_metadata.json` rather than hardcoding source or signal
 counts, since the set of sources changes upstream.

@@ -31,7 +31,7 @@ using EpiDataKit: HTTPTransport, fetch_raw, decode_response, standardize, body_s
                   DelphiFluView, FLUVIEW_ENDPOINT, FLUVIEW_MEASURES,
                   COVIDCAST_META_ENDPOINT, COVIDCAST_META_CSV_HEADER,
                   V5_SNAPSHOT_ENDPOINT, V5_ARCHIVE_ENDPOINT, V5_METADATA_ENDPOINT,
-                  V5_CSV_HEADER_PREFIX, V5_COLUMNS
+                  V5_REFERENCE_TIMES_ENDPOINT, V5_CSV_HEADER_PREFIX, V5_COLUMNS
 
 using JSON3
 
@@ -359,6 +359,30 @@ const CHECKS = [
         end,
     ),
     (
+        name = "V5 reference times",
+        endpoint = V5_REFERENCE_TIMES_ENDPOINT,
+        fixture = "v5_reference_times.json",
+        params = Dict("source" => "nssp", "signal" => "pct_ed_visits_covid"),
+        check = function (resp)
+            problems = String[]
+            resp.status == 200 || push!(problems, "expected status 200, got $(resp.status)")
+            obj = try
+                JSON3.read(body_string(resp))
+            catch
+                push!(problems, "expected a JSON body; got non-JSON")
+                return problems
+            end
+            # The only way fetch_snapshot can tell weekly from daily on a single date.
+            ref = obj isa AbstractDict ? get(obj, :reference_times, nothing) : nothing
+            if !(ref isa AbstractVector)
+                push!(problems, "JSON body has no `reference_times` array")
+            elseif !all(d -> d isa AbstractString && tryparse(Date, d) !== nothing, ref)
+                push!(problems, "`reference_times` holds something other than ISO dates")
+            end
+            return problems
+        end,
+    ),
+    (
         name = "V3 retired",
         endpoint = COVIDCAST_ENDPOINT,
         fixture = "covidcast_retired.json",
@@ -532,6 +556,10 @@ function main()
         elseif :fluview ∉ cat.source
             println("DRIFT")
             println("      the static fluview half is missing")
+            failed += 1
+        elseif :fetch_snapshot ∉ cat.fetch_with
+            println("DRIFT")
+            println("      the V5 half is missing")
             failed += 1
         else
             println("ok (", length(cat), " entries, ",
