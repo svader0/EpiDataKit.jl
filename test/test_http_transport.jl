@@ -23,10 +23,10 @@ using EpiDataKit: HTTPTransport, fetch_raw, ratelimit, body_string, TransportErr
                 ["X-My-Limit" => "60", "X-My-Remaining" => "55",
                  "X-My-Reset" => "1785654587", "Content-Type" => "text/csv"],
                 "hello")
-        elseif path == "/echo"
+        elseif path in ("/echo", "/v5base/v5/echo")
             # Report back exactly what arrived, so tests can assert on the wire format.
             auth = HTTP.header(req, "Authorization", "")
-            return HTTP.Response(200, "target=$(req.target)\nauth=$auth")
+            return HTTP.Response(200, "target=$(req.target)\nauth=$auth\ntoken=$(HTTP.header(req, "token", ""))")
         elseif path == "/flaky"
             # Fails twice, then succeeds; should be retried through to success.
             return hits[path] < 3 ? HTTP.Response(500, "server error") :
@@ -103,6 +103,15 @@ using EpiDataKit: HTTPTransport, fetch_raw, ratelimit, body_string, TransportErr
             # The thing that must never happen: a credential in a loggable URL.
             @test !occursin("s3cret", target)
             @test !occursin("api_key", target)
+            @test occursin("token=\n", body * "\n")
+        end
+
+        @testset "a V5 endpoint goes to the V5 host with a token header" begin
+            t = transport(api_key = "s3cret", v5_base_url = base * "/v5base/")
+            body = body_string(fetch_raw(t, "v5/echo", Dict("signal" => "x")))
+            @test occursin("token=s3cret", body)
+            @test occursin("auth=\n", body)
+            @test !occursin("s3cret", split(body, '\n')[1])
         end
 
         @testset "no key means no Authorization header" begin

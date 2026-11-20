@@ -84,15 +84,19 @@ an [`EpiResponse`](@ref).
 abstract type AbstractTransport end
 
 const DELPHI_BASE_URL = "https://api.delphi.cmu.edu/epidata/"
+# V5 is served from a different host; it 404s on api.delphi.cmu.edu.
+const DELPHI_V5_BASE_URL = "https://delphi.cmu.edu/epidata/"
 
 """
-    HTTPTransport(; base_url, api_key, max_retries, base_delay, max_delay, timeout)
+    HTTPTransport(; base_url, v5_base_url, api_key, max_retries, base_delay, max_delay, timeout)
 
 Talks to the real API.
 
-The API key defaults to `ENV["DELPHI_EPIDATA_KEY"]` and is sent as HTTP Basic auth
-(`epidata:<key>`) rather than as a query parameter, so it cannot leak through access
-logs, `Referer` headers, or an exception that quotes the URL.
+The API key defaults to `ENV["DELPHI_EPIDATA_KEY"]` and is sent in a header
+rather than as a query parameter, so it cannot leak through access logs, `Referer`
+headers, or an exception that quotes the URL. V3 endpoints get HTTP Basic auth
+(`epidata:<key>`); `v5/` endpoints go to `v5_base_url` with a `token` header instead.
+Exactly one scheme is sent per request.
 
 Retries cover `429` and `5xx` only. A `4xx` means the request itself was wrong and will
 be exactly as wrong the second time, so retrying it just burns quota that is capped at
@@ -115,6 +119,7 @@ struct HTTPTransport <: AbstractTransport
     max_delay::Float64
     timeout::Int
     max_response_bytes::Int
+    v5_base_url::String
 end
 
 function HTTPTransport(;
@@ -125,14 +130,19 @@ function HTTPTransport(;
     max_delay::Real = 30.0,
     timeout::Integer = 60,
     max_response_bytes::Integer = 512 * 1024 * 1024,
+    v5_base_url::AbstractString = DELPHI_V5_BASE_URL,
 )
     key = api_key === nothing || isempty(api_key) ? nothing : string(api_key)
     HTTPTransport(string(base_url), key, Int(max_retries), Float64(base_delay),
-                  Float64(max_delay), Int(timeout), Int(max_response_bytes))
+                  Float64(max_delay), Int(timeout), Int(max_response_bytes),
+                  string(v5_base_url))
 end
 
-function auth_headers(t::HTTPTransport)
+is_v5(endpoint::AbstractString) = startswith(lstrip(endpoint, '/'), "v5/")
+
+function auth_headers(t::HTTPTransport, endpoint::AbstractString = "")
     t.api_key === nothing && return Pair{String,String}[]
+    is_v5(endpoint) && return ["token" => t.api_key]
     token = base64encode(string("epidata:", t.api_key))
     return ["Authorization" => string("Basic ", token)]
 end
@@ -170,8 +180,9 @@ end
 
 function fetch_raw(t::HTTPTransport, endpoint::AbstractString, params)
     key = request_key(endpoint, params)
-    url = string(rstrip(t.base_url, '/'), "/", lstrip(endpoint, '/'))
-    headers = auth_headers(t)
+    base = is_v5(endpoint) ? t.v5_base_url : t.base_url
+    url = string(rstrip(base, '/'), "/", lstrip(endpoint, '/'))
+    headers = auth_headers(t, endpoint)
     local last_resp::Union{EpiResponse,Nothing} = nothing
 
     for attempt in 1:(t.max_retries + 1)

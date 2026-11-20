@@ -2,7 +2,7 @@ using Base64
 using Dates
 using EpiDataKit: canonical_query, request_key, auth_headers, backoff_delay, fetch_raw,
                   mock_response, ratelimit, scrub_secrets, covidcast_params, is_retryable,
-                  EpiResponse, DELPHI_BASE_URL
+                  EpiResponse, DELPHI_BASE_URL, DELPHI_V5_BASE_URL
 
 @testset "transport" begin
     @testset "canonical_query is order-independent" begin
@@ -37,6 +37,14 @@ using EpiDataKit: canonical_query, request_key, auth_headers, backoff_delay, fet
         @test startswith(value, "Basic ")
         # epidata:s3cret
         @test value == "Basic " * base64encode("epidata:s3cret")
+    end
+
+    @testset "V5 endpoints authenticate with a token header" begin
+        t = HTTPTransport(api_key = "s3cret")
+        @test auth_headers(t, "v5/snapshot/") == ["token" => "s3cret"]
+        @test auth_headers(t, "covidcast/") == auth_headers(t)
+        @test isempty(auth_headers(HTTPTransport(api_key = nothing), "v5/snapshot/"))
+        @test HTTPTransport().v5_base_url == DELPHI_V5_BASE_URL == "https://delphi.cmu.edu/epidata/"
     end
 
     @testset "no key means no auth header" begin

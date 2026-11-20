@@ -196,7 +196,8 @@ past.issue    # [Date("2026-06-27")]  — the vintage you asked for
 Delphi allows 60 requests/hour anonymously and lifts the cap entirely with a
 [free API key](https://cmu-delphi.github.io/delphi-epidata/api/api_keys.html). Set
 `DELPHI_EPIDATA_KEY` and it is picked up automatically — and sent as an HTTP Basic header,
-never as a query parameter, so it cannot leak through logs or an exception message.
+never as a query parameter, so it cannot leak through logs or an exception message. V5
+requests carry the key as a `token` header instead.
 
 It is highly recommended to request an API key from Delphi, as you are optionally able to provide data that helps them with future research and funding. 
 
