@@ -7,8 +7,8 @@ using EpiDataKit: empty_catalog, DelphiCovidcastMeta, COVIDCAST_META_ENDPOINT,
                   catalog, request_key, v5_catalog_entries, V5_METADATA_ENDPOINT
 using JSON3
 
-const V5_META = JSON3.read(fixture("v5_metadata.json"))
-v5_count(pred = _ -> true) = count(pred, v5_catalog_entries(V5_META))
+const CATALOG_V5_META = JSON3.read(fixture("v5_metadata.json"))
+v5_count(pred = _ -> true) = count(pred, v5_catalog_entries(CATALOG_V5_META))
 
 function mock_for_catalog(body; status = 200, kwargs...)
     params = catalog_params(; kwargs...)
@@ -204,19 +204,19 @@ end
     end
 
     @testset "V5 metadata becomes catalog entries" begin
-        cat = v5_catalog_entries(V5_META)
+        cat = v5_catalog_entries(CATALOG_V5_META)
         nssp = cat[findall(==(:nssp), cat.source)]
         claims = cat[findall(==(:claims_outpatient), cat.source)]
 
         @test cat isa CatalogTable
-        @test length(nssp) == length(V5_META.nssp.signals) * length(V5_META.nssp.geo_types)
+        @test length(nssp) == length(CATALOG_V5_META.nssp.signals) * length(CATALOG_V5_META.nssp.geo_types)
         @test all(==(:week), nssp.time_type)
         @test all(==(:day), claims.time_type)
         @test :nwss ∉ cat.source
         @test all(==(:fetch_snapshot), cat.fetch_with)
-        @test all(==(Date(V5_META.nssp.report_time_range.latest[1:10])), nssp.last_issue)
-        @test all(==(Date(V5_META.nssp.reference_time_range.first) - Day(6)), nssp.first_period)
-        @test all(==(Date(V5_META.nssp.reference_time_range.latest)), nssp.last_period)
+        @test all(==(Date(CATALOG_V5_META.nssp.report_time_range.latest[1:10])), nssp.last_issue)
+        @test all(==(Date(CATALOG_V5_META.nssp.reference_time_range.first) - Day(6)), nssp.first_period)
+        @test all(==(Date(CATALOG_V5_META.nssp.reference_time_range.latest)), nssp.last_period)
         @test all(ismissing, cat.num_locations)
         @test all(ismissing, cat.min_lag)
         @test all(ismissing, cat.max_lag)
