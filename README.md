@@ -22,26 +22,40 @@ pkg> add https://github.com/svader0/EpiDataKit.jl
 ## Quick Start
 
 ```julia
-using EpiDataKit
+using EpiDataKit, Dates
 
-tbl = fetch_covidcast(
-    data_source = "nssp",
-    signal      = "pct_ed_visits_covid",
-    time_type   = "week",
-    geo_type    = "state",
-    time_values = "202620-202629",
-    geo_value   = "ca",
+tbl = fetch_snapshot(
+    source          = "nssp",
+    signal          = "pct_ed_visits_covid",
+    geo_type        = "state",
+    geo_values      = ["ca", "ny"],
+    reference_times = Date(2026, 1, 1):Date(2026, 1, 31),
 )
 
 tbl[1]
-# EpiObservation(:nssp, :pct_ed_visits_covid, STATE, "ca",
-#                Date("2026-05-17"), Date("2026-05-23"),
-#                0.07, missing, missing, Date("2026-08-01"), NOT_MISSING)
+# EpiObservation(:nssp, :pct_ed_visits_covid, STATE, "ny",
+#                Date("2026-01-25"), Date("2026-01-31"),
+#                0.52, missing, missing, Date("2026-04-29"), 13, NOT_MISSING,
+#                "source", missing, missing, missing)
 
 # Save table to disk
 EpiDataKit.save(tbl, "nssp_covid.arrow")
 tbl2 = EpiDataKit.load("nssp_covid.arrow")
 ```
+
+`fetch_snapshot` and `fetch_archive` use Delphi's V5 cast-API. The older V3 endpoints
+(`fetch_covidcast`, `fetch_fluview`) no longer serve time values after 2026-09-22, so use V5
+for anything later. Both V5 fetchers need a signal and `geo_type`; `geo_values` and
+`reference_times` filter server-side.
+
+| V3 | V5 |
+|---|---|
+| `data_source` | `source` |
+| `time_values` | `reference_times` |
+| `as_of` | `snapshot_date` |
+| `issues` | `fetch_archive(report_time = …)` |
+| `lag` | computed, not a filter |
+| `fluview` | `fluview_ilinet` |
 
 The table is a Tables.jl source, so it goes straight into a `DataFrame` when you want one:
 
@@ -58,7 +72,8 @@ df = DataFrame(tbl; copycols=false)
 #                                                                    5 columns omitted
 ```
 
-Weekly signals accept real dates, so you never have to compute an epiweek by hand:
+The V3 functions below still work for data up to 2026-09-22. Weekly signals accept real
+dates, so you never have to compute an epiweek by hand:
 
 ```julia
 tbl = fetch_covidcast(
@@ -88,6 +103,12 @@ tbl = fetch_covidcast(
 flu = fetch_fluview(
     epiweeks = Date(2020, 1, 1):Date(2020, 6, 1),
     regions  = ["nat", "hhs1"],
+)
+
+# After the V3 cutoff, use V5; strata such as age_group are selected explicitly.
+flu = fetch_snapshot(
+    source = "fluview_ilinet", signal = "num_ili", geo_type = "nation",
+    reference_times = Date(2026, 9, 1):Date(2026, 9, 30), age_group = "all",
 )
 
 unique(flu.signal)
@@ -177,18 +198,27 @@ any level.
 
 ### Data Revisions
 
-`as_of` reconstructs what was known on a given date,
-which makes backtesting convenient.
+`fetch_archive` returns every revision of a value, one row per period and `issue`;
+`report_time` limits which issues. A bare date is rejected there, because a report time is
+a timestamp:
 
 ```julia
-past = fetch_covidcast(
-    data_source = "nssp", signal = "pct_ed_visits_covid",
-    time_type = "week", geo_type = "state",
-    time_values = "202620", geo_value = "ca",
-    as_of = "202625",
+revs = fetch_archive(
+    source = "nssp", signal = "pct_ed_visits_covid", geo_type = "state",
+    geo_values = "ca", reference_times = Date(2026, 9, 1):Date(2026, 10, 31),
+    report_time = ">=2026-10-01",
 )
+```
 
-past.issue    # [Date("2026-06-27")]  — the vintage you asked for
+`fetch_snapshot(snapshot_date = …)` reconstructs what was known on a given date, which
+makes backtesting convenient. On V3, `as_of` does the same:
+
+```julia
+past = fetch_snapshot(
+    source = "nssp", signal = "pct_ed_visits_covid", geo_type = "state",
+    geo_values = "ca", reference_times = Date(2026, 6, 20):Date(2026, 6, 27),
+    snapshot_date = Date(2026, 7, 1),
+)
 ```
 
 ### API Access
@@ -226,14 +256,14 @@ struct EpiObservation
 end
 ```
 
-`lag` is counted in the signal's own time units — days for a daily signal, weeks for a
-weekly one — and stored as the source reported it. `issue - period_end` gives days either
+`lag` is counted in the signal's own time units, days for a daily signal and weeks for a
+weekly one. V3 rows carry it as the source reported it; V5 rows compute it client-side from
+`issue` minus `period_start`, since V5 reports none. `issue - period_end` gives days either
 way, and the schema deliberately does not record the time resolution, so a derived lag
 would be seven times off for weekly signals with nothing to signal the mistake.
 
 The last four fields match epidatr's V5 output. They are `missing` on V3 rows, while `stderr`
 and `sample_size` are `missing` on V5 rows.
-
 
 The schema uses intervals, not a resolution flag. A daily observation is a one-day interval and a
 weekly one spans Sunday–Saturday, so daily and weekly signals share a schema.

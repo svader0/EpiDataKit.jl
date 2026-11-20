@@ -7,13 +7,12 @@ as Arrow for downstream modeling packages.
 ```julia
 using EpiDataKit
 
-tbl = fetch_covidcast(
-    data_source = "nssp",
-    signal      = "pct_ed_visits_covid",
-    time_type   = "week",
-    geo_type    = "state",
-    time_values = "202620-202629",
-    geo_value   = "ca",
+tbl = fetch_snapshot(
+    source          = "nssp",
+    signal          = "pct_ed_visits_covid",
+    geo_type        = "state",
+    geo_values      = "ca",
+    reference_times = Date(2026, 1, 1):Date(2026, 1, 31),
 )
 
 flu = fetch_fluview(epiweeks = "202020-202029", regions = ["nat"])
@@ -22,7 +21,7 @@ EpiDataKit.save(vcat(tbl, flu), "surveillance.arrow")
 EpiDataKit.scan("surveillance.arrow")
 ```
 
-Both endpoints produce the same [`EpiObservation`](@ref) schema, so results combine without
+All fetchers produce the same [`EpiObservation`](@ref) schema, so results combine without
 special-casing. [`EpiDataKit.load`](@ref) reads a file into mutable vectors;
 [`EpiDataKit.scan`](@ref) memory-maps it read-only for a fraction of the cost.
 """
@@ -58,7 +57,7 @@ export NOT_MISSING, NOT_APPLICABLE, REGION_EXCEPTION, CENSORED, DELETED, OTHER
 # Sources and fetching
 export AbstractSource, DelphiCovidcast, DelphiFluView, DelphiCovidcastMeta, DelphiV5
 export AbstractTransport, HTTPTransport, MockTransport
-export fetch_covidcast, fetch_fluview, standardize
+export fetch_covidcast, fetch_fluview, fetch_snapshot, fetch_archive, standardize
 
 # Catalog
 export CatalogEntry, CatalogTable, catalog
