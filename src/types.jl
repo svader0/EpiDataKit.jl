@@ -223,13 +223,15 @@ Blank out anything credential-shaped in a request description before it is store
 exception. Exceptions get logged, printed, and pasted into issue trackers, so a key that
 reaches one should be assumed disclosed.
 
-The transport sends the API key as an HTTP Basic header rather than a query parameter, so
-this is a second line of defense.
+The transport sends the API key in a header rather than a query parameter, HTTP Basic on
+V3 and a `token` header on V5, so this is a second line of defense.
 """
 function scrub_secrets(s::AbstractString)
     out = replace(s,
         r"(?i)\b(api[-_]?key|apikey|auth|authorization|access[-_]?token|token|secret|password|passwd|pwd|key)=[^&\s]*"
         => s"\1=[REDACTED]")
+    # V5's `token: <key>` header line carries the key itself.
+    out = replace(out, r"(?i)\b(token):\s*[^\s&]+" => s"\1: [REDACTED]")
     out = replace(out, r"(?i)(https?://)[^/@\s]+:[^/@\s]+@" => s"\1[REDACTED]@")
     # An `Authorization: Basic <base64>` value decodes straight back to the key.
     replace(out, r"(?i)\b(Basic|Bearer)\s+[A-Za-z0-9+/=._~-]+" => s"\1 [REDACTED]")

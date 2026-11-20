@@ -76,6 +76,7 @@ using EpiDataKit: canonical_query, request_key, auth_headers, backoff_delay, fet
         @test occursin("[REDACTED]", scrubbed)
         @test !occursin(base64encode("epidata:s3cret"), scrubbed)
         @test occursin("[REDACTED]", scrub_secrets("Authorization: Bearer abc.def.ghi"))
+        @test scrub_secrets("Token: s3cret") == "Token: [REDACTED]"
 
         # Delphi's real parameters must survive untouched; over-redaction here would
         # make every error message useless for debugging.
