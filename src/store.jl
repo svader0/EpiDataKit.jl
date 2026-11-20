@@ -2,7 +2,8 @@
 Columns worth dictionary-encoding: low cardinality and repeated on every row. Encoding the
 float measurements too costs more than it saves. See the README's storage section.
 """
-const DICT_ENCODED_COLUMNS = (:source, :signal, :geo_id, :geo_level, :missing_code)
+const DICT_ENCODED_COLUMNS = (:source, :signal, :geo_id, :geo_level, :missing_code,
+                                :fill_method, :age_group)
 
 """
     save(tbl::EpiTable, path; compress = nothing) -> path
@@ -75,7 +76,8 @@ function _open_checked(path::AbstractString)
     end
 
     present = Set{Symbol}(Tables.columnnames(t))
-    absent = [c for c in fieldnames(EpiObservation) if !(c in present)]
+    # The V5 columns arrived after v0.2 files existed, so their absence is not an error.
+    absent = [c for c in fieldnames(EpiObservation)[1:12] if !(c in present)]
     isempty(absent) || throw(StoreError(path,
         "not an EpiDataKit table: missing column(s) " * join(absent, ", ") *
         ". Found: " * join(sort!(collect(present)), ", ")))
@@ -110,6 +112,10 @@ function load(path::AbstractString)
         issue        = _materialize(Union{Date,Missing}, t.issue),
         lag          = _materialize(Union{Int,Missing}, t.lag),
         missing_code = _materialize_enum(MissingCode, t.missing_code, path),
+        fill_method  = _materialize(Union{String,Missing}, _v5col(t, :fill_method)),
+        age_group    = _materialize(Union{String,Missing}, _v5col(t, :age_group)),
+        ci_lower     = _materialize(Union{Float64,Missing}, _v5col(t, :ci_lower)),
+        ci_upper     = _materialize(Union{Float64,Missing}, _v5col(t, :ci_upper)),
     ))
 end
 
@@ -189,8 +195,16 @@ function scan(path::AbstractString)
         issue        = t.issue,
         lag          = t.lag,
         missing_code = EnumView{MissingCode}(_check_enum(MissingCode, t.missing_code, path)),
+        fill_method  = _v5col(t, :fill_method),
+        age_group    = _v5col(t, :age_group),
+        ci_lower     = _v5col(t, :ci_lower),
+        ci_upper     = _v5col(t, :ci_upper),
     ))
 end
+
+# A `Vector{Missing}` allocates nothing, so `scan` stays copy-free on a pre-V5 file.
+_v5col(t, name::Symbol) =
+    name in Tables.columnnames(t) ? Tables.getcolumn(t, name) : fill(missing, Tables.rowcount(t))
 
 # Arrow hands back its own lazy column types: dictionary-encoded arrays, `String` views.
 _materialize(::Type{T}, col) where {T} = T[convert(T, x) for x in col]

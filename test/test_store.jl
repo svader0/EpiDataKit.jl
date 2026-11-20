@@ -144,11 +144,11 @@ end
         mktempdir() do dir
             cols = Tables.columntable(sample_table())
             p = joinpath(dir, "future.arrow")
-            Arrow.write(p, merge(cols, (geo_level = Int8[9, 9, 9],)))
+            Arrow.write(p, merge(cols, (geo_level = Int8[10, 10, 10],)))
 
             err = try; load(p); catch e; e; end
             @test err isa StoreError
-            @test occursin("9", err.msg)
+            @test occursin("10", err.msg)
             @test occursin("GeoLevel", err.msg)
             @test occursin("newer version", err.msg)
 
@@ -221,7 +221,7 @@ end
         mktempdir() do dir
             cols = Tables.columntable(sample_table())
             p = joinpath(dir, "future.arrow")
-            Arrow.write(p, merge(cols, (geo_level = Int8[9, 9, 9],)))
+            Arrow.write(p, merge(cols, (geo_level = Int8[10, 10, 10],)))
 
             err = try; scan(p); catch e; e; end
             @test err isa StoreError
@@ -301,4 +301,26 @@ end
         @test Tables.columnaccess(tbl)
         @test Set(Tables.columnnames(tbl)) == Set(fieldnames(EpiObservation))
     end
+end
+
+@testset "the V5 columns round-trip" begin
+    o = EpiObservation(:nickel_beta, :covid_ed, STATE, "ca", Date(2026,10,1), Date(2026,10,1),
+                       1.99, missing, missing, Date(2026,10,23), 22, NOT_MISSING,
+                       "zero", "All", 0.77, 3.23)
+    p = tempname() * ".arrow"
+    save(EpiTable([o]), p)
+    @test load(p) == EpiTable([o])
+    @test scan(p) == load(p)
+end
+
+@testset "a file written before the V5 columns existed still opens" begin
+    o = EpiObservation(:nssp, :pct_ed_visits_covid, STATE, "ca", Date(2026,5,17),
+                       Date(2026,5,23), 0.07, missing, missing, Date(2026,8,1), 10, NOT_MISSING)
+    old = NamedTuple{fieldnames(EpiObservation)[1:12]}(Tables.columntable(EpiTable([o])))
+    p = tempname() * ".arrow"
+    Arrow.write(p, old)                     # the v0.2 on-disk layout
+    tbl = load(p)
+    @test tbl[1] == o
+    @test all(ismissing, tbl.fill_method) && all(ismissing, tbl.ci_upper)
+    @test scan(p) == tbl
 end

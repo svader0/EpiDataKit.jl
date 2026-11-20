@@ -83,7 +83,9 @@ function _columns(rows, per_row::Int = 1)
             period_start = Date[], period_end = Date[],
             value = Union{Float64,Missing}[], stderr = Union{Float64,Missing}[],
             sample_size = Union{Float64,Missing}[], issue = Union{Date,Missing}[],
-            lag = Union{Int,Missing}[], missing_code = MissingCode[])
+            lag = Union{Int,Missing}[], missing_code = MissingCode[],
+            fill_method = Union{String,Missing}[], age_group = Union{String,Missing}[],
+            ci_lower = Union{Float64,Missing}[], ci_upper = Union{Float64,Missing}[])
     foreach(c -> sizehint!(c, n), cols)
     return cols
 end
@@ -119,6 +121,10 @@ function standardize(::DelphiCovidcast, raw)
         push!(c.issue, parse_issue(tt, _get(row, :issue, avail)))
         push!(c.lag, coerce_int(_get(row, :lag, avail)))
         push!(c.missing_code, coerce_missing_code(_get(row, :missing_value, avail)))
+        push!(c.fill_method, missing)
+        push!(c.age_group, missing)
+        push!(c.ci_lower, missing)
+        push!(c.ci_upper, missing)
     end
 
     return StructArray{EpiObservation}(c)
@@ -162,6 +168,10 @@ function standardize(::DelphiFluView, raw)
             push!(c.issue, iss)
             push!(c.lag, lag)
             push!(c.missing_code, NOT_MISSING)
+            push!(c.fill_method, missing)
+            push!(c.age_group, missing)
+            push!(c.ci_lower, missing)
+            push!(c.ci_upper, missing)
         end
     end
 

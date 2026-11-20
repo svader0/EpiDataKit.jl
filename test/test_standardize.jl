@@ -231,4 +231,14 @@ end
     @test e isa EpiTable
     @test length(e) == 0
     @test eltype(e) == EpiObservation
+
+    @testset "V5 columns" begin
+        src = DelphiCovidcast()
+        tbl = standardize(src, decode_response(src, mock_response(fixture("covidcast_success.csv"))))
+        o12 = (:nssp, :pct_ed_visits_covid, STATE, "ca", Date(2026,5,17), Date(2026,5,23),
+               0.07, missing, missing, Date(2026,8,1), 10, NOT_MISSING)
+        @test EpiObservation(o12...) == EpiObservation(o12..., missing, missing, missing, missing)
+        @test all(ismissing, tbl.fill_method) && all(ismissing, tbl.age_group)
+        @test all(ismissing, tbl.ci_lower) && all(ismissing, tbl.ci_upper)
+    end
 end

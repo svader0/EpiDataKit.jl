@@ -15,6 +15,7 @@ decode to the wrong level.
     HRR             = 6
     DMA             = 7
     HSA_NCI         = 8
+    CENSUS_REGION   = 9
 end
 
 """
@@ -46,11 +47,13 @@ The interval is closed, so `period_start:period_end` is inclusive. A daily obser
 revised after the fact, so (period_start, issue) is the true identifier for a measurement.
 
 `lag` is how long after the period the value was published, counted in the signal's own
-time units: days for a daily signal, weeks for a weekly one. It is stored as the source
-reported it rather than recomputed. `issue - period_end` gives days regardless, and this
-schema does not record the time resolution, so deriving `lag` would mean inferring it from
-the interval width and then converting. Nowcast evaluation filters on lag directly, so it
-is worth a column.
+time units: days for a daily signal, weeks for a weekly one. V3 reports it and it is stored
+as reported. V5 does not, so for V5 rows it is computed in the signal's own units, the same
+convention. `issue - period_end` gives days regardless, and this schema does not record the
+time resolution. Nowcast evaluation filters on lag directly, so it is worth a column.
+
+`fill_method`, `age_group`, `ci_lower` and `ci_upper` match epidatr's V5 output. They are
+`missing` on V3 rows, while `stderr` and `sample_size` are `missing` on V5 rows.
 """
 struct EpiObservation
     source::Symbol
@@ -65,7 +68,17 @@ struct EpiObservation
     issue::Union{Date,Missing}
     lag::Union{Int,Missing}
     missing_code::MissingCode
+    fill_method::Union{String,Missing}
+    age_group::Union{String,Missing}
+    ci_lower::Union{Float64,Missing}
+    ci_upper::Union{Float64,Missing}
 end
+
+# The V3 sources have none of the V5 columns, so every existing call site stays valid.
+EpiObservation(source, signal, geo_level, geo_id, period_start, period_end, value, stderr,
+               sample_size, issue, lag, missing_code) =
+    EpiObservation(source, signal, geo_level, geo_id, period_start, period_end, value, stderr,
+                   sample_size, issue, lag, missing_code, missing, missing, missing, missing)
 
 # --------------------------------------------------
 #                   EQUALITY TYPES

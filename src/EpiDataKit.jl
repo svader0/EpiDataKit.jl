@@ -51,7 +51,7 @@ include("store.jl")
 
 # Schema
 export EpiObservation, EpiTable, GeoLevel, MissingCode
-export NATION, HHS_REGION, CENSUS_DIVISION, STATE, COUNTY, MSA, HRR, DMA, HSA_NCI
+export NATION, HHS_REGION, CENSUS_DIVISION, STATE, COUNTY, MSA, HRR, DMA, HSA_NCI, CENSUS_REGION
 export NOT_MISSING, NOT_APPLICABLE, REGION_EXCEPTION, CENSORED, DELETED, OTHER
 
 # Sources and fetching

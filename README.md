@@ -218,6 +218,10 @@ struct EpiObservation
     issue::Union{Date,Missing}            # when it was published
     lag::Union{Int,Missing}               # periods between period_end and issue
     missing_code::MissingCode             # why `value` is absent, when it is
+    fill_method::Union{String,Missing}    # V5 only
+    age_group::Union{String,Missing}      # V5 only
+    ci_lower::Union{Float64,Missing}      # V5 only
+    ci_upper::Union{Float64,Missing}      # V5 only
 end
 ```
 
@@ -225,6 +229,9 @@ end
 weekly one — and stored as the source reported it. `issue - period_end` gives days either
 way, and the schema deliberately does not record the time resolution, so a derived lag
 would be seven times off for weekly signals with nothing to signal the mistake.
+
+The last four fields match epidatr's V5 output. They are `missing` on V3 rows, while `stderr`
+and `sample_size` are `missing` on V5 rows.
 
 
 The schema uses intervals, not a resolution flag. A daily observation is a one-day interval and a
