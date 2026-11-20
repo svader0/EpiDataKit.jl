@@ -14,6 +14,23 @@ const GEO_TYPE_MAP = Dict{String,GeoLevel}(
     "hrr" => HRR,
     "dma" => DMA,
     "hsa_nci" => HSA_NCI,
+    "census_region" => CENSUS_REGION,
+)
+
+"""
+The canonical wire name of each [`GeoLevel`](@ref); `GEO_TYPE_MAP` also carries aliases.
+"""
+const GEO_TYPE_NAMES = Dict{GeoLevel,String}(
+    NATION => "nation",
+    HHS_REGION => "hhs",
+    CENSUS_DIVISION => "census_division",
+    STATE => "state",
+    COUNTY => "county",
+    MSA => "msa",
+    HRR => "hrr",
+    DMA => "dma",
+    HSA_NCI => "hsa_nci",
+    CENSUS_REGION => "census_region",
 )
 
 """

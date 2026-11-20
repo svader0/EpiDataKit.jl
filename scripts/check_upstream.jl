@@ -29,12 +29,40 @@ using EpiDataKit
 using EpiDataKit: HTTPTransport, fetch_raw, decode_response, standardize, body_string,
                   ratelimit, DelphiCovidcast, COVIDCAST_CSV_HEADER, COVIDCAST_ENDPOINT,
                   DelphiFluView, FLUVIEW_ENDPOINT, FLUVIEW_MEASURES,
-                  COVIDCAST_META_ENDPOINT, COVIDCAST_META_CSV_HEADER
+                  COVIDCAST_META_ENDPOINT, COVIDCAST_META_CSV_HEADER,
+                  V5_SNAPSHOT_ENDPOINT, V5_ARCHIVE_ENDPOINT, V5_METADATA_ENDPOINT,
+                  V5_REFERENCE_TIMES_ENDPOINT, V5_CSV_HEADER_PREFIX, V5_COLUMNS
 
 using JSON3
 
 const FIXTURES = joinpath(@__DIR__, "..", "test", "fixtures")
 const WRITE = "--write" in ARGS
+
+# Splits a V5 CSV reply into its header columns and data lines, noting a wrong status or
+# an empty body as problems. V5 never pads an empty result: it sends the header alone.
+function v5_csv(resp)
+    problems = String[]
+    resp.status == 200 || push!(problems, "expected status 200, got $(resp.status)")
+    lines = split(strip(body_string(resp)), '\n')
+    header = strip(lines[1])
+    isempty(header) && push!(problems, "expected a CSV body, got an empty one")
+    return problems, split(header, ','), lines[2:end]
+end
+
+# The prefix is what `decode_response` gates on; extra trailing columns are tolerated by
+# the parser but must be known to standardize, or they are dropped.
+function v5_header_problems(cols)
+    problems = String[]
+    startswith(join(cols, ','), V5_CSV_HEADER_PREFIX) ||
+        push!(problems, "CSV header prefix changed\n      expected: $V5_CSV_HEADER_PREFIX\n      got:      $(join(cols, ','))")
+    unknown = [c for c in cols if Symbol(c) ∉ V5_COLUMNS]
+    isempty(unknown) || push!(problems, "columns missing from V5_COLUMNS: $(join(unknown, ", "))")
+    return problems
+end
+
+# Column values of one named column across the data lines.
+v5_column(cols, rows, name) =
+    (i = findfirst(==(name), cols); i === nothing ? String[] : [split(r, ',')[i] for r in rows])
 
 # Each entry: the query to send, the fixture it backs, and what must remain true of the
 # response. `check` returns a list of problems; empty means the contract still holds.
@@ -207,6 +235,174 @@ const CHECKS = [
             return problems
         end,
     ),
+    (
+        name = "V5 snapshot success",
+        endpoint = V5_SNAPSHOT_ENDPOINT,
+        fixture = "v5_snapshot_success.csv",
+        params = Dict("source" => "nssp", "signal" => "pct_ed_visits_covid",
+                      "geo_type" => "state", "geo_value" => "ca,ny",
+                      "reference_times" => "2026-01-01:2026-01-31", "format" => "csv"),
+        check = function (resp)
+            problems, cols, rows = v5_csv(resp)
+            append!(problems, v5_header_problems(cols))
+            isempty(rows) && push!(problems, "expected at least one data row, got header only")
+            # Neither filter is documented; the fixture and its tests assume both hold.
+            all(in(("ca", "ny")), v5_column(cols, rows, "geo_value")) ||
+                push!(problems, "geo_value filter no longer restricts to ca,ny")
+            all(d -> "2026-01-01" <= d <= "2026-01-31", v5_column(cols, rows, "reference_time")) ||
+                push!(problems, "reference_times filter no longer restricts to January 2026")
+            return problems
+        end,
+    ),
+    (
+        name = "V5 no results",
+        endpoint = V5_SNAPSHOT_ENDPOINT,
+        fixture = "v5_snapshot_noresults.csv",
+        params = Dict("source" => "nssp", "signal" => "pct_ed_visits_covid",
+                      "geo_type" => "state", "snapshot_date" => "1990-01-01",
+                      "format" => "csv"),
+        check = function (resp)
+            problems = String[]
+            resp.status == 200 || push!(problems, "expected status 200, got $(resp.status)")
+            n = length(split(strip(body_string(resp)), '\n'))
+            n == 1 || push!(problems, "expected the header line alone, got $n lines")
+            return problems
+        end,
+    ),
+    (
+        name = "V5 validation error",
+        endpoint = V5_SNAPSHOT_ENDPOINT,
+        fixture = "v5_validation_error.json",
+        params = Dict("source" => "nssp", "geo_type" => "state", "format" => "csv"),
+        check = function (resp)
+            problems = String[]
+            resp.status == 422 || push!(problems, "expected status 422, got $(resp.status)")
+            obj = try
+                JSON3.read(body_string(resp))
+            catch
+                push!(problems, "expected a JSON body despite format=csv; got non-JSON")
+                return problems
+            end
+            obj isa AbstractDict && get(obj, :detail, nothing) isa AbstractVector ||
+                push!(problems, "JSON body has no `detail` array")
+            return problems
+        end,
+    ),
+    (
+        name = "V5 strata",
+        endpoint = V5_SNAPSHOT_ENDPOINT,
+        fixture = "v5_snapshot_strata.csv",
+        params = Dict("source" => "fluview_ilinet", "signal" => "num_ili",
+                      "geo_type" => "nation", "reference_times" => "2026-09-01:2026-09-30",
+                      "format" => "csv"),
+        check = function (resp)
+            problems, cols, _ = v5_csv(resp)
+            "age_group" in cols || push!(problems, "header has no `age_group` column")
+            append!(problems, v5_header_problems(cols))
+            return problems
+        end,
+    ),
+    (
+        name = "V5 daily with CI",
+        endpoint = V5_SNAPSHOT_ENDPOINT,
+        fixture = "v5_snapshot_daily_ci.csv",
+        params = Dict("source" => "sleepcycle", "signal" => "pct_cough_10_plus_7dav",
+                      "geo_type" => "state", "geo_value" => "ca",
+                      "reference_times" => "2026-10-01:2026-10-07", "format" => "csv"),
+        check = function (resp)
+            problems, cols, _ = v5_csv(resp)
+            for c in ("ci_lower", "ci_upper")
+                c in cols || push!(problems, "header has no `$c` column")
+            end
+            append!(problems, v5_header_problems(cols))
+            return problems
+        end,
+    ),
+    (
+        name = "V5 archive",
+        endpoint = V5_ARCHIVE_ENDPOINT,
+        fixture = "v5_archive_success.csv",
+        params = Dict("source" => "nssp", "signal" => "pct_ed_visits_covid",
+                      "geo_type" => "state", "geo_value" => "ca",
+                      "reference_times" => "2026-09-01:2026-10-31",
+                      "report_time_query" => ">=2026-10-01", "format" => "csv"),
+        check = function (resp)
+            problems, cols, rows = v5_csv(resp)
+            append!(problems, v5_header_problems(cols))
+            isempty(rows) && push!(problems, "expected at least one data row, got header only")
+            return problems
+        end,
+    ),
+    (
+        name = "V5 metadata",
+        endpoint = V5_METADATA_ENDPOINT,
+        fixture = "v5_metadata.json",
+        params = Dict{String,String}(),
+        check = function (resp)
+            problems = String[]
+            resp.status == 200 || push!(problems, "expected status 200, got $(resp.status)")
+            obj = try
+                JSON3.read(body_string(resp))
+            catch
+                push!(problems, "expected a JSON body; got non-JSON")
+                return problems
+            end
+            entry = get(obj, :nssp, nothing)
+            if entry === nothing
+                push!(problems, "metadata has no `nssp` entry")
+                return problems
+            end
+            for f in (:signals, :geo_types, :reference_time_range, :report_time_range)
+                haskey(entry, f) || push!(problems, "nssp entry is missing `$f`")
+            end
+            return problems
+        end,
+    ),
+    (
+        name = "V5 reference times",
+        endpoint = V5_REFERENCE_TIMES_ENDPOINT,
+        fixture = "v5_reference_times.json",
+        params = Dict("source" => "nssp", "signal" => "pct_ed_visits_covid"),
+        check = function (resp)
+            problems = String[]
+            resp.status == 200 || push!(problems, "expected status 200, got $(resp.status)")
+            obj = try
+                JSON3.read(body_string(resp))
+            catch
+                push!(problems, "expected a JSON body; got non-JSON")
+                return problems
+            end
+            # The only way fetch_snapshot can tell weekly from daily on a single date.
+            ref = obj isa AbstractDict ? get(obj, :reference_times, nothing) : nothing
+            if !(ref isa AbstractVector)
+                push!(problems, "JSON body has no `reference_times` array")
+            elseif !all(d -> d isa AbstractString && tryparse(Date, d) !== nothing, ref)
+                push!(problems, "`reference_times` holds something other than ISO dates")
+            end
+            return problems
+        end,
+    ),
+    (
+        name = "V3 retired",
+        endpoint = COVIDCAST_ENDPOINT,
+        fixture = "covidcast_retired.json",
+        params = Dict("data_source" => "nssp", "signal" => "pct_ed_visits_covid",
+                      "time_type" => "week", "geo_type" => "state",
+                      "time_values" => "202645", "geo_value" => "ca", "format" => "csv"),
+        check = function (resp)
+            problems = String[]
+            resp.status == 410 || push!(problems, "expected status 410, got $(resp.status)")
+            obj = try
+                JSON3.read(body_string(resp))
+            catch
+                push!(problems, "expected a JSON body; got non-JSON")
+                return problems
+            end
+            get(obj, :result, nothing) == -3 ||
+                push!(problems, "expected result = -3, got $(get(obj, :result, "absent"))")
+            return problems
+        end,
+    ),
 ]
 
 function main()
@@ -218,7 +414,7 @@ function main()
     failed = 0
     last_resp = nothing
 
-    println("Checking ", length(CHECKS), " upstream contracts against api.delphi.cmu.edu\n")
+    println("Checking ", length(CHECKS), " upstream contracts against Delphi's V3 and V5 hosts\n")
 
     for c in CHECKS
         print("  ", rpad(c.name, 34))
@@ -306,6 +502,50 @@ function main()
         failed += 1
     end
 
+    print("  ", rpad("fetch_snapshot end to end", 34))
+    try
+        tbl = fetch_snapshot(source = "nssp", signal = "pct_ed_visits_covid",
+                             geo_type = "state", geo_values = "ca",
+                             reference_times = "2026-01-01:2026-01-31")
+        if length(tbl) == 0
+            println("DRIFT")
+            println("      returned zero rows for a window that previously had data")
+            failed += 1
+        else
+            bad = filter(o -> o.period_end - o.period_start != Day(6), collect(tbl))
+            if !isempty(bad)
+                println("DRIFT")
+                println("      $(length(bad)) weekly rows are not 7-day spans")
+                failed += 1
+            else
+                println("ok (", length(tbl), " rows)")
+            end
+        end
+    catch e
+        println("ERROR")
+        println("      ", sprint(showerror, e))
+        failed += 1
+    end
+
+    print("  ", rpad("fetch_archive end to end", 34))
+    try
+        tbl = fetch_archive(source = "nssp", signal = "pct_ed_visits_covid",
+                            geo_type = "state", geo_values = "ca",
+                            reference_times = "2026-09-01:2026-10-31",
+                            report_time = ">=2026-10-01")
+        if length(tbl) == 0
+            println("DRIFT")
+            println("      returned zero rows for a window that previously had data")
+            failed += 1
+        else
+            println("ok (", length(tbl), " rows)")
+        end
+    catch e
+        println("ERROR")
+        println("      ", sprint(showerror, e))
+        failed += 1
+    end
+
     print("  ", rpad("catalog end to end", 34))
     try
         cat = catalog()
@@ -316,6 +556,10 @@ function main()
         elseif :fluview ∉ cat.source
             println("DRIFT")
             println("      the static fluview half is missing")
+            failed += 1
+        elseif :fetch_snapshot ∉ cat.fetch_with
+            println("DRIFT")
+            println("      the V5 half is missing")
             failed += 1
         else
             println("ok (", length(cat), " entries, ",
@@ -349,7 +593,9 @@ function main()
     println("  2. If the CSV header changed, update COVIDCAST_CSV_HEADER in src/sources/delphi.jl.")
     println("  3. If the covidcast_meta header changed, update COVIDCAST_META_CSV_HEADER in src/catalog.jl.")
     println("  4. If a status or result code changed, update decode_response and its tests.")
-    println("  5. Run the offline suite: julia --project=. -e 'using Pkg; Pkg.test()'")
+    println("  5. If the V5 header prefix changed, update V5_CSV_HEADER_PREFIX in src/sources/delphi_v5.jl.")
+    println("  6. If a new V5 column appears, update V5_COLUMNS in src/standardize.jl and the schema.")
+    println("  7. Run the offline suite: julia --project=. -e 'using Pkg; Pkg.test()'")
     return 1
 end
 

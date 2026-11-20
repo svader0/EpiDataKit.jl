@@ -2,7 +2,7 @@ using Dates
 using StructArrays
 using Tables
 using EpiDataKit: decode_response, mock_response, standardize, coerce_float,
-                  coerce_missing_code, empty_table
+                  coerce_missing_code, empty_table, v5_time_type
 
 @testset "standardize" begin
     src = DelphiCovidcast()
@@ -231,4 +231,94 @@ end
     @test e isa EpiTable
     @test length(e) == 0
     @test eltype(e) == EpiObservation
+end
+
+@testset "V5 columns" begin
+    src = DelphiCovidcast()
+    tbl = standardize(src, decode_response(src, mock_response(fixture("covidcast_success.csv"))))
+    o12 = (:nssp, :pct_ed_visits_covid, STATE, "ca", Date(2026,5,17), Date(2026,5,23),
+           0.07, missing, missing, Date(2026,8,1), 10, NOT_MISSING)
+    @test EpiObservation(o12...) == EpiObservation(o12..., missing, missing, missing, missing)
+    @test all(ismissing, tbl.fill_method) && all(ismissing, tbl.age_group)
+    @test all(ismissing, tbl.ci_lower) && all(ismissing, tbl.ci_upper)
+end
+
+@testset "V5" begin
+    src5 = DelphiV5(:nssp)
+    dec(name) = decode_response(src5, mock_response(fixture(name)))
+    hdr = "signal,report_time,geo_type,geo_value,fill_method,reference_time"
+    row5(r) = decode_response(src5, mock_response(hdr * ",value\nx," * r * "\n"))
+
+    @testset "v5_time_type" begin
+        @test v5_time_type([Date(2026,1,3), Date(2026,1,10)]) == :week
+        @test v5_time_type([Date(2026,1,3), Date(2026,1,4)]) == :day
+        @test v5_time_type([Date(2026,1,3)]) === nothing
+        @test v5_time_type([Date(2026,1,3), Date(2026,1,3)]) === nothing
+        @test v5_time_type(Date[]) === nothing
+    end
+
+    @testset "weekly" begin
+        tbl = standardize(src5, dec("v5_snapshot_success.csv"))
+        @test length(tbl) == 10
+        @test all(==(:nssp), tbl.source)
+        @test all(d -> dayofweek(d) == Saturday, tbl.period_end)
+        @test all(o -> o.period_end - o.period_start == Day(6), tbl)
+        @test all(o -> o.lag == fld(Dates.value(o.issue - o.period_start), 7), tbl)
+        @test all(==("source"), tbl.fill_method)
+        @test all(ismissing, tbl.age_group) && all(ismissing, tbl.stderr) &&
+              all(ismissing, tbl.sample_size)
+    end
+
+    @testset "pinned lag examples" begin
+        wk = standardize(src5, row5("2026-01-07T12:00:00Z,state,ca,source,2026-01-03,1.5"); time_type = :week)
+        @test wk.lag[1] == 1
+        dy = standardize(src5, row5("2026-01-03T18:00:00Z,state,ca,source,2026-01-03,1.5"); time_type = :day)
+        @test dy.lag[1] == 0
+    end
+
+    @testset "daily with CI" begin
+        tbl = standardize(DelphiV5(:sleepcycle), dec("v5_snapshot_daily_ci.csv"))
+        @test length(tbl) == 7
+        @test all(o -> o.period_start == o.period_end, tbl)
+        @test all(o -> o.lag == Dates.value(o.issue - o.period_start), tbl)
+        @test !any(ismissing, tbl.ci_lower) && !any(ismissing, tbl.ci_upper)
+        @test all(==("source"), tbl.fill_method)
+        @test all(ismissing, tbl.age_group)
+    end
+
+    @testset "strata" begin
+        tbl = standardize(DelphiV5(:fluview_ilinet), dec("v5_snapshot_strata.csv"))
+        @test length(unique(tbl.age_group)) > 1
+        @test "all" in tbl.age_group
+        @test allunique((o.signal, o.geo_id, o.period_start, o.issue, o.age_group, o.fill_method) for o in tbl)
+        @test Set(tbl.geo_id) == Set(["us"])
+        @test all(==(NATION), tbl.geo_level)
+    end
+
+    @testset "time_type override and ambiguity" begin
+        tbl = standardize(src5, dec("v5_snapshot_success.csv"); time_type = :day)
+        @test all(o -> o.period_start == o.period_end, tbl)
+        one = row5("2026-01-07T12:00:00Z,state,ca,source,2026-01-03,1.5")
+        @test_throws ValidationError standardize(src5, one)
+    end
+
+    @testset "empty value" begin
+        raw = row5("2026-01-07T12:00:00Z,state,ca,source,2026-01-03,")
+        tbl = standardize(src5, raw; time_type = :week)
+        @test tbl.value[1] === missing
+        @test tbl.missing_code[1] == OTHER
+    end
+
+    @testset "unknown key column" begin
+        raw = decode_response(src5, mock_response(hdr * ",nwss_source,value\nx,2026-01-07T12:00:00Z,state,ca,source,2026-01-03,a,1.5\n"))
+        err = try standardize(src5, raw; time_type = :week); nothing catch e e end
+        @test err isa ValidationError
+        @test occursin("nwss_source", err.msg)
+    end
+
+    @testset "combines with V3" begin
+        v3 = standardize(DelphiCovidcast(), decode_response(DelphiCovidcast(),
+                         mock_response(fixture("covidcast_success.csv"))))
+        @test vcat(v3, standardize(src5, dec("v5_snapshot_success.csv"))) isa EpiTable
+    end
 end

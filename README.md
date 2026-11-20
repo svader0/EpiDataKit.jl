@@ -22,26 +22,40 @@ pkg> add https://github.com/svader0/EpiDataKit.jl
 ## Quick Start
 
 ```julia
-using EpiDataKit
+using EpiDataKit, Dates
 
-tbl = fetch_covidcast(
-    data_source = "nssp",
-    signal      = "pct_ed_visits_covid",
-    time_type   = "week",
-    geo_type    = "state",
-    time_values = "202620-202629",
-    geo_value   = "ca",
+tbl = fetch_snapshot(
+    source          = "nssp",
+    signal          = "pct_ed_visits_covid",
+    geo_type        = "state",
+    geo_values      = ["ca", "ny"],
+    reference_times = Date(2026, 1, 1):Date(2026, 1, 31),
 )
 
 tbl[1]
-# EpiObservation(:nssp, :pct_ed_visits_covid, STATE, "ca",
-#                Date("2026-05-17"), Date("2026-05-23"),
-#                0.07, missing, missing, Date("2026-08-01"), NOT_MISSING)
+# EpiObservation(:nssp, :pct_ed_visits_covid, STATE, "ny",
+#                Date("2026-01-25"), Date("2026-01-31"),
+#                0.52, missing, missing, Date("2026-04-29"), 13, NOT_MISSING,
+#                "source", missing, missing, missing)
 
 # Save table to disk
 EpiDataKit.save(tbl, "nssp_covid.arrow")
 tbl2 = EpiDataKit.load("nssp_covid.arrow")
 ```
+
+`fetch_snapshot` and `fetch_archive` use Delphi's V5 cast-API. The older V3 endpoints
+(`fetch_covidcast`, `fetch_fluview`) no longer serve time values after 2026-09-22, so use V5
+for anything later. Both V5 fetchers need a signal and `geo_type`; `geo_values` and
+`reference_times` filter server-side.
+
+| V3 | V5 |
+|---|---|
+| `data_source` | `source` |
+| `time_values` | `reference_times` |
+| `as_of` | `snapshot_date` |
+| `issues` | `fetch_archive(report_time = …)` |
+| `lag` | computed, not a filter |
+| `fluview` | `fluview_ilinet` |
 
 The table is a Tables.jl source, so it goes straight into a `DataFrame` when you want one:
 
@@ -49,16 +63,21 @@ The table is a Tables.jl source, so it goes straight into a `DataFrame` when you
 using DataFrames
 
 df = DataFrame(tbl; copycols=false)
-# 2×11 DataFrame
-#  Row │ source  signal               geo_level  geo_id  period_start  period_end  v ⋯
-#      │ Symbol  Symbol               GeoLevel   String  Dates.Date    Dates.Date  F ⋯
-# ─────┼──────────────────────────────────────────────────────────────────────────────
-#    1 │ nssp    pct_ed_visits_covid  STATE      ca      2026-05-17    2026-05-23    ⋯
-#    2 │ nssp    pct_ed_visits_covid  STATE      ca      2026-05-24    2026-05-30    ⋯
-#                                                                    5 columns omitted
+# 10×16 DataFrame
+#  Row │ source  signal               geo_level  geo_id  period_start  period_end  ⋯
+#      │ Symbol  Symbol               GeoLevel   String  Date          Date        ⋯
+# ─────┼────────────────────────────────────────────────────────────────────────────
+#    1 │ nssp    pct_ed_visits_covid  STATE      ny      2026-01-25    2026-01-31  ⋯
+#    2 │ nssp    pct_ed_visits_covid  STATE      ny      2026-01-11    2026-01-17
+#    3 │ nssp    pct_ed_visits_covid  STATE      ny      2026-01-18    2026-01-24
+#   ⋮  │   ⋮              ⋮               ⋮        ⋮          ⋮            ⋮       ⋱
+#    9 │ nssp    pct_ed_visits_covid  STATE      ca      2025-12-28    2026-01-03
+#   10 │ nssp    pct_ed_visits_covid  STATE      ca      2026-01-11    2026-01-17  ⋯
+#                                                      10 columns and 5 rows omitted
 ```
 
-Weekly signals accept real dates, so you never have to compute an epiweek by hand:
+The V3 functions below still work for data up to 2026-09-22. Weekly signals accept real
+dates, so you never have to compute an epiweek by hand:
 
 ```julia
 tbl = fetch_covidcast(
@@ -99,6 +118,16 @@ row, so each upstream row becomes several observations distinguished by `signal`
 `wili` and `ili` — percentages — `sample_size` carries `num_patients`, the denominator they
 are computed from.
 
+After the V3 cutoff, use V5. It has one signal per request, and strata such as `age_group`
+are selected explicitly:
+
+```julia
+flu5 = fetch_snapshot(
+    source = "fluview_ilinet", signal = "num_ili", geo_type = "nation",
+    reference_times = Date(2026, 9, 1):Date(2026, 9, 30), age_group = "all",
+)
+```
+
 Both endpoints produce the same schema, so results combine without special-casing:
 
 ```julia
@@ -114,7 +143,7 @@ website:
 ```julia
 cat = catalog()
 length(cat)
-# 3014
+# 3014, for example; the count changes as Delphi adds and retires signals
 
 covid = filter(e -> e.source === :nssp && e.signal === :pct_ed_visits_covid, cat)
 covid[1]
@@ -122,6 +151,20 @@ covid[1]
 #              Date("2022-09-25"), Date("2026-08-15"), 2426,
 #              Date("2026-08-22"), 1, 203, :fetch_covidcast)
 ```
+
+V5 entries name `:fetch_snapshot`. V5 metadata gives one date range per source, so every signal
+inherits it and `num_locations`, `min_lag` and `max_lag` are `missing`:
+
+```julia
+v5 = filter(e -> e.fetch_with === :fetch_snapshot, cat)
+v5[1]
+# CatalogEntry(:nssp, :pct_ed_visits_ari, :week, CENSUS_DIVISION,
+#              Date("2022-09-25"), Date("2026-11-14"), missing,
+#              Date("2026-11-18"), missing, missing, :fetch_snapshot)
+```
+
+An unfiltered `catalog()` makes two requests, one to `covidcast_meta` and one to V5
+`metadata/`; `catalog(source = "fluview")` makes none.
 
 `fetch_with` names the function to call, as a `Symbol`, so you map it to the actual function
 by hand:
@@ -141,7 +184,7 @@ tbl[1]
 ```julia
 sources = unique(cat.source)
 length(sources)
-# 27
+# 27, for example
 
 print(filter(in((:nssp, :chng, :fluview)), sources))
 # [:chng, :nssp, :fluview]
@@ -155,7 +198,8 @@ filtering and `DataFrame` conversion both work:
 filter(e -> e.source === :nssp && e.geo_level == STATE, cat)
 ```
 
-Keywords narrow it, and `source` makes the request much smaller:
+Keywords narrow it, and `source` makes the `covidcast_meta` request much smaller. The V5
+`metadata/` request is the same whatever the keywords, so V5 entries are filtered locally:
 
 ```julia
 catalog(source = "nssp")
@@ -163,8 +207,8 @@ catalog(source = "nssp", signal = "pct_ed_visits_covid")
 catalog(time_type = "week", geo_type = "county")
 ```
 
-One call is one request, and the unfiltered reply is about 400 KB, so bind the result
-instead of calling it in a loop.
+The unfiltered `covidcast_meta` reply alone is about 400 KB, so bind the result instead of
+calling it in a loop.
 
 The `fluview` entries are the exception to the coverage columns. The API publishes only a
 whole-table summary for that endpoint, not per-signal extents, so those rows carry the
@@ -177,18 +221,27 @@ any level.
 
 ### Data Revisions
 
-`as_of` reconstructs what was known on a given date,
-which makes backtesting convenient.
+`fetch_archive` returns every revision of a value, one row per period and `issue`;
+`report_time` limits which issues. A bare date is rejected there, because a report time is
+a timestamp:
 
 ```julia
-past = fetch_covidcast(
-    data_source = "nssp", signal = "pct_ed_visits_covid",
-    time_type = "week", geo_type = "state",
-    time_values = "202620", geo_value = "ca",
-    as_of = "202625",
+revs = fetch_archive(
+    source = "nssp", signal = "pct_ed_visits_covid", geo_type = "state",
+    geo_values = "ca", reference_times = Date(2026, 9, 1):Date(2026, 10, 31),
+    report_time = ">=2026-10-01",
 )
+```
 
-past.issue    # [Date("2026-06-27")]  — the vintage you asked for
+`fetch_snapshot(snapshot_date = …)` reconstructs what was known on a given date, which
+makes backtesting convenient. It is V5's counterpart to V3's `as_of`:
+
+```julia
+past = fetch_snapshot(
+    source = "nssp", signal = "pct_ed_visits_covid", geo_type = "state",
+    geo_values = "ca", reference_times = Date(2026, 6, 20):Date(2026, 6, 27),
+    snapshot_date = Date(2026, 7, 1),
+)
 ```
 
 ### API Access
@@ -196,7 +249,8 @@ past.issue    # [Date("2026-06-27")]  — the vintage you asked for
 Delphi allows 60 requests/hour anonymously and lifts the cap entirely with a
 [free API key](https://cmu-delphi.github.io/delphi-epidata/api/api_keys.html). Set
 `DELPHI_EPIDATA_KEY` and it is picked up automatically — and sent as an HTTP Basic header,
-never as a query parameter, so it cannot leak through logs or an exception message.
+never as a query parameter, so it cannot leak through logs or an exception message. V5
+requests carry the key as a `token` header instead.
 
 It is highly recommended to request an API key from Delphi, as you are optionally able to provide data that helps them with future research and funding. 
 
@@ -216,16 +270,28 @@ struct EpiObservation
     stderr::Union{Float64,Missing}
     sample_size::Union{Float64,Missing}
     issue::Union{Date,Missing}            # when it was published
-    lag::Union{Int,Missing}               # periods between period_end and issue
+    lag::Union{Int,Missing}               # issue - period_start, in the signal's own units
     missing_code::MissingCode             # why `value` is absent, when it is
+    fill_method::Union{String,Missing}    # V5 only
+    age_group::Union{String,Missing}      # V5 only
+    ci_lower::Union{Float64,Missing}      # V5 only
+    ci_upper::Union{Float64,Missing}      # V5 only
 end
 ```
 
-`lag` is counted in the signal's own time units — days for a daily signal, weeks for a
-weekly one — and stored as the source reported it. `issue - period_end` gives days either
-way, and the schema deliberately does not record the time resolution, so a derived lag
-would be seven times off for weekly signals with nothing to signal the mistake.
+`lag` is counted in the signal's own time units, days for a daily signal and weeks for a
+weekly one. V3 rows carry it as the source reported it; V5 rows compute it client-side from
+`issue` minus `period_start` at fetch time, since V5 reports none. `issue - period_end`
+gives days either way. The schema deliberately does not record the time resolution, so a
+lag derived later from the table alone could not know its units; that is why it is a column.
 
+On a weekly signal, `issue` means different things in V3 and V5 rows. V3 stores the
+Saturday ending the issue week, V5 the UTC date of the report. `lag` agrees across the two,
+but an `issue <= d` filter does not. Only the date of a V5 `report_time` is kept, so two
+revisions reported on the same UTC day would share an `issue` in a `fetch_archive` result.
+
+The last four fields match epidatr's V5 output. They are `missing` on V3 rows, while `stderr`
+and `sample_size` are `missing` on V5 rows.
 
 The schema uses intervals, not a resolution flag. A daily observation is a one-day interval and a
 weekly one spans Sunday–Saturday, so daily and weekly signals share a schema.
@@ -274,7 +340,7 @@ Working now: the `covidcast` and `fluview` endpoints end to end — fetch, retry
 backoff, standardize, Arrow round-trip — plus `catalog` for discovering what is available,
 all with an offline test suite.
 
-Not yet: `catalog` does not cache, so each call costs a request, and `fetch_covidcast` does
+Not yet: `catalog` does not cache, so each call repeats its requests, and `fetch_covidcast` does
 not check a signal name against it before sending. Also absent: a rate limiter, concurrent
 chunked fetch, and an incremental on-disk cache.
 

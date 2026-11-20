@@ -1,5 +1,6 @@
 using EpiDataKit: decode_response, mock_response, check_result, try_json_envelope,
-                  COVIDCAST_CSV_HEADER, format_time_values, covidcast_params
+                  COVIDCAST_CSV_HEADER, format_time_values, covidcast_params,
+                  V5_CSV_HEADER_PREFIX, csv_header
 using Dates
 using Tables
 
@@ -165,4 +166,28 @@ end
         @test p["as_of"] == "202630"
         @test p["lag"] == "3"
     end
+end
+
+@testset "V5" begin
+    src5 = DelphiV5(:nssp)
+    caught(f) = try f(); nothing catch e e end
+    @test csv_header(src5) == V5_CSV_HEADER_PREFIX
+    rows = collect(Tables.rows(decode_response(src5, mock_response(fixture("v5_snapshot_success.csv")))))
+    @test length(rows) == 10
+    @test Set(r.geo_value for r in rows) == Set(["ca", "ny"])
+    @test_throws NoResultsError decode_response(src5, mock_response(fixture("v5_snapshot_noresults.csv")))
+
+    err = caught(() -> decode_response(src5, mock_response(fixture("v5_validation_error.json"); status = 422)))
+    @test err isa EpidataError
+    @test err.code === nothing
+    @test occursin("signal is required", err.message)
+
+    err = caught(() -> decode_response(src5, mock_response("{\"detail\": \"nope\"}"; status = 422)))
+    @test err isa EpidataError && err.message == "nope"
+
+    # V3 retirement: pinned so a change in upstream wording or status shows up here.
+    err = caught(() -> decode_response(DelphiCovidcast(), mock_response(fixture("covidcast_retired.json"); status = 410)))
+    @test err isa EpidataError
+    @test err.code == -3
+    @test occursin("2026-09-22", err.message)
 end

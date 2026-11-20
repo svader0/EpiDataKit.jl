@@ -11,6 +11,7 @@ Base URL: `https://api.delphi.cmu.edu/epidata/`
 | `covidcast_noresults.csv` | 200 | same, but `time_values=199001` — body is **empty**, which is how CSV mode signals "no results" |
 | `covidcast_validation_error.json` | **400** | `data_source=nssp&format=csv` — note the body is JSON even though `format=csv` was requested |
 | `covidcast_noresults.json` | 200 | same as `noresults.csv` but without `format=csv`, for contrast: JSON mode uses `result: -2` |
+| `covidcast_retired.json` | **410** | recorded 2026-11-20: `data_source=nssp&signal=pct_ed_visits_covid&time_type=week&geo_type=state&time_values=202645&geo_value=ca&format=csv` — V3 no longer serves time values after 2026-09-22; body is JSON with `result: -3` |
 | `covidcast_truncated.json` | 200 | **synthetic.** `result: 2` was not reproducible on demand; the shape follows the documented code |
 
 `covidcast_noresults.csv` is intentionally a zero-byte file. Do not "fix" it by adding a header
@@ -60,5 +61,42 @@ A response that is not upstream speaking — a 429 from the rate limit, or a 5xx
 balancer — is never recorded, so a bad moment cannot overwrite a good fixture with an
 error page.
 
-Mind the anonymous rate limit of 60 requests/hour; each run costs 10 requests — 7 contract
-checks plus one end-to-end call per endpoint.
+Mind the anonymous rate limit of 60 requests/hour; each run costs 22 requests — 16 contract
+checks plus 6 end-to-end requests (`catalog()` makes two).
+
+## V5 — endpoint `v5/snapshot/`
+
+Recorded 2026-11-20 from `https://delphi.cmu.edu/epidata/v5/` (anonymous; no token).
+
+| File | Status | Query |
+|---|---|---|
+| `v5_snapshot_success.csv` | 200 | `source=nssp&signal=pct_ed_visits_covid&geo_type=state&geo_value=ca,ny&reference_times=2026-01-01:2026-01-31&format=csv` — 5 Saturdays x 2 states |
+| `v5_snapshot_noresults.csv` | 200 | `source=nssp&signal=pct_ed_visits_covid&geo_type=state&snapshot_date=1990-01-01&format=csv` — **header line only**, which is how V5 says no results |
+| `v5_validation_error.json` | **422** | `source=nssp&geo_type=state&format=csv` — `{"detail":[{"msg":…}],"code":"validation_error"}` |
+| `v5_snapshot_strata.csv` | 200 | `source=fluview_ilinet&signal=num_ili&geo_type=nation&reference_times=2026-09-01:2026-09-30&format=csv` — has an `age_group` column |
+| `v5_snapshot_daily_ci.csv` | 200 | `source=sleepcycle&signal=pct_cough_10_plus_7dav&geo_type=state&geo_value=ca&reference_times=2026-10-01:2026-10-07&format=csv` — daily, with `ci_lower,ci_upper` |
+
+`sleepcycle` was chosen for the daily/CI case because `nickel_beta` was withdrawn from V5
+between 2026-10-29 and 2026-11-20.
+
+### `v5/archive/`
+
+Recorded 2026-11-20, same host.
+
+| File | Status | Query |
+|---|---|---|
+| `v5_archive_success.csv` | 200 | `source=nssp&signal=pct_ed_visits_covid&geo_type=state&geo_value=ca&reference_times=2026-09-01:2026-10-31&report_time_query=>=2026-10-01&format=csv` — several reference dates appear under more than one `report_time` |
+
+V5 rows carry no `source` column and no time resolution, so neither is recoverable from a fixture.
+
+### `v5/metadata/`
+
+Recorded 2026-11-20, same host.
+
+| File | Status | Query |
+|---|---|---|
+| `v5_metadata.json` | 200 | none — the whole object, one key per source, about 28 KB |
+| `v5_reference_times.json` | 200 | endpoint `v5/metadata/reference_times/`: `source=nssp&signal=pct_ed_visits_covid` — `{"reference_times": […]}`, 216 dates, every one a Saturday |
+
+Tests derive their expectations from `v5_metadata.json` rather than hardcoding source or signal
+counts, since the set of sources changes upstream.

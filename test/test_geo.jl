@@ -1,4 +1,4 @@
-using EpiDataKit: parse_geo_level, normalize_geo_id, GEO_TYPE_MAP
+using EpiDataKit: parse_geo_level, normalize_geo_id, GEO_TYPE_MAP, GEO_TYPE_NAMES
 
 @testset "geo" begin
     @testset "parse_geo_level" begin
@@ -62,5 +62,12 @@ using EpiDataKit: parse_geo_level, normalize_geo_id, GEO_TYPE_MAP
         for (name, lvl) in GEO_TYPE_MAP
             @test parse_geo_level(name) == lvl
         end
+    end
+
+    @testset "census_region and canonical names" begin
+        @test parse_geo_level("census_region") === CENSUS_REGION
+        @test Int8(CENSUS_REGION) == 9
+        @test GEO_TYPE_NAMES[HHS_REGION] == "hhs"
+        @test all(GEO_TYPE_MAP[GEO_TYPE_NAMES[l]] === l for l in instances(GeoLevel))
     end
 end

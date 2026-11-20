@@ -25,6 +25,7 @@ endpoint(::DelphiCovidcast) = COVIDCAST_ENDPOINT
 Turn Delphi's `result` code into either a return or the right exception.
 """
 function check_result(request::AbstractString, code::Union{Int,Nothing}, message::AbstractString)
+    code === nothing && throw(EpidataError(request, nothing, message))
     code == 1 && return nothing
     code == -2 && throw(NoResultsError(request))
     code == 2 && throw(TruncatedResultsError(request, message))
@@ -44,6 +45,13 @@ function try_json_envelope(body::AbstractString)
         return nothing
     end
     obj isa JSON3.Object || return nothing
+    # V5 reports errors as `{"detail": [{"msg": …}]}` with no result code.
+    if haskey(obj, :detail)
+        d = obj.detail
+        msg = d isa AbstractString ? String(d) :
+              join((haskey(x, :msg) ? string(x.msg) : string(x) for x in d), "; ")
+        return (nothing, msg, nothing)
+    end
     haskey(obj, :result) || return nothing
     code = obj.result isa Integer ? Int(obj.result) : tryparse(Int, string(obj.result))
     msg = haskey(obj, :message) ? string(obj.message) : ""
@@ -86,12 +94,17 @@ function decode_response(src::AbstractSource, resp::EpiResponse)
             "unrecognized 200 body: not JSON, and does not begin with the expected " *
             "CSV header for this endpoint. First 200 bytes: " * first(stripped, 200)))
     end
+    # V5 answers a query that matched nothing with the header line alone. V3 is left as
+    # it was: a header-only body there decodes to an empty table (pinned in test_decode).
+    src isa DelphiV5 && !occursin('\n', stripped) && throw(NoResultsError(resp.request))
 
     # `geo_value` is forced to String because CSV parsing would otherwise read a county
     # FIPS code such as "06075" as the integer 6075 and lose the leading zero, silently
     # turning it into a different, real county code. `validate = false` lets an endpoint
     # with no `geo_value` column, such as `covidcast_meta`, share this same decoder.
-    return CSV.File(resp.body; types = Dict("geo_value" => String), stringtype = String,
+    return CSV.File(resp.body; types = Dict("geo_value" => String, "report_time" => String,
+                                 "reference_time" => String, "fill_method" => String,
+                                 "age_group" => String), stringtype = String,
                      validate = false)
 end
 

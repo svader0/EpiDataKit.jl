@@ -166,6 +166,48 @@ function _matches(e::CatalogEntry, source, signal, time_type, geo_type)
     return true
 end
 
+"""
+    v5_catalog_entries(meta) -> CatalogTable
+
+The V5 half of the catalog, from a decoded `metadata/` object.
+
+V5 metadata gives one extent per source, not per signal, so every signal inherits its
+source's dates and `num_locations`, `min_lag` and `max_lag` are `missing`. A geo type missing
+from [`GEO_TYPE_MAP`](@ref) (`sewershed`, `misc` and the like) is skipped silently: those are
+permanent and have no [`GeoLevel`](@ref), so a warning would fire on every call. A source
+whose extent is null or empty is skipped too. Nothing else is: a non-date string or a
+missing key still throws.
+"""
+function v5_catalog_entries(meta)
+    entries = CatalogEntry[]
+    for (src, info) in pairs(meta)
+        first_ref = _v5_date(info.reference_time_range.first)
+        latest = _v5_date(info.reference_time_range.latest)
+        (ismissing(first_ref) || ismissing(latest)) && continue
+        # ponytail: two dates are a thin guess. A source whose first date is not a Saturday
+        # reads as daily (pophive starts on a Sunday), and a daily one whose first and latest
+        # dates are both Saturdays reads as weekly (sleepcycle, about one day in seven).
+        # Fetches guess from the returned dates, so the two can disagree; per-signal
+        # reference_times would settle it at one request per signal.
+        tt = something(v5_time_type([first_ref, latest]), :day)
+        first_period = tt === :week ? first_ref - Day(6) : first_ref
+        last_issue = _v5_date(info.report_time_range.latest)
+        for sig in info.signals, geo in info.geo_types
+            lvl = get(GEO_TYPE_MAP, lowercase(String(geo)), nothing)
+            lvl === nothing && continue
+            push!(entries, CatalogEntry(Symbol(src), Symbol(sig), tt, lvl, first_period,
+                                        latest, missing, last_issue, missing, missing,
+                                        :fetch_snapshot))
+        end
+    end
+    return isempty(entries) ? empty_catalog() : CatalogTable(entries)
+end
+
+function _v5_catalog(transport::AbstractTransport)
+    return v5_catalog_entries(decode_v5_json(
+        fetch_raw(transport, V5_METADATA_ENDPOINT, Dict{String,String}())))
+end
+
 function _covidcast_catalog(transport::AbstractTransport, params)
     src = DelphiCovidcastMeta()
     try
@@ -197,15 +239,27 @@ data and the function that retrieves it. The `covidcast` half comes from the liv
 per-signal coverage for it, so those rows carry `missing` for every extent column. Asking
 for `source = "fluview"` makes no request at all.
 
+The `fetch_snapshot` half comes from Delphi's V5 `metadata/` endpoint. It reports one date
+range per source rather than per signal, so each signal inherits its source's range and
+`num_locations`, `min_lag` and `max_lag` are `missing`. Geographic levels this package has no
+[`GeoLevel`](@ref) for are left out without a warning. V5 does not report a time resolution:
+a source whose first and latest dates are both Saturdays is listed as weekly. That guess can
+be wrong both ways: a source whose first date is not a Saturday is listed as daily
+(`pophive` starts on a Sunday), and a daily source is listed as weekly whenever its first and
+latest dates both fall on a Saturday (`sleepcycle`, about one day in seven). A fetch guesses from the dates it
+returns instead, so the catalog and a fetch can disagree; `time_type` on the fetch settles it.
+
 The `fluview` rows are the signal list, not verified coverage: they say the measure exists
 somewhere in the endpoint, not that every level of it returns data. `num_age_2` is a known
 example — it is `null` in every recorded reply, so `fetch_fluview` returns zero observations
 for it at any geographic level.
 
-One call is one request against a cap of 60/hour for anonymous callers, and the unfiltered
-reply is about 400 KB, so bind the result rather than calling this in a loop. `source` and
-`time_type` narrow the request itself, and `signal` narrows it too when `source` is given.
-`geo_type` filters the result, for the reason [`catalog_params`](@ref) explains.
+An unfiltered call is two requests: `covidcast_meta` against a cap of 60/hour for anonymous
+callers, about 400 KB, and V5 `metadata/`, about 28 KB. Bind the result rather than calling this in a loop. `source` and
+`time_type` narrow the `covidcast_meta` request itself, and `signal` narrows it too when
+`source` is given. The V5 request is never narrowed. `geo_type` filters the result, for the reason [`catalog_params`](@ref) explains.
+Every call except `source = "fluview"` needs both hosts up, even one whose filters can only
+match V3 datasets.
 
 Throws [`NoResultsError`](@ref) when no dataset matches at all. The result is a
 [`CatalogTable`](@ref), not an [`EpiTable`](@ref).
@@ -220,7 +274,9 @@ function catalog(; source = nothing, signal = nothing, time_type = nothing,
     # covidcast_meta has no fluview data_source, so this path never reaches the wire.
     covidcast = fluview_only ? empty_catalog() : _covidcast_catalog(transport, params)
 
-    all_entries = vcat(covidcast, fluview_catalog_entries())
+    v5 = fluview_only ? empty_catalog() : _v5_catalog(transport)
+
+    all_entries = vcat(covidcast, fluview_catalog_entries(), v5)
     keep = findall(e -> _matches(e, source, signal, time_type, geo_type), all_entries)
     if isempty(keep)
         throw(NoResultsError(fluview_only ?
