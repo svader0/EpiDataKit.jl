@@ -61,8 +61,8 @@ A response that is not upstream speaking — a 429 from the rate limit, or a 5xx
 balancer — is never recorded, so a bad moment cannot overwrite a good fixture with an
 error page.
 
-Mind the anonymous rate limit of 60 requests/hour; each run costs 10 requests — 7 contract
-checks plus one end-to-end call per endpoint.
+Mind the anonymous rate limit of 60 requests/hour; each run costs 20 requests — 15 contract
+checks plus 5 end-to-end calls.
 
 ## V5 — endpoint `v5/snapshot/`
 
