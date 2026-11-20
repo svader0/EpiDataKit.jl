@@ -191,10 +191,13 @@ function fetch_raw(t::HTTPTransport, endpoint::AbstractString, params)
             # HTTP.jl defaults `connect_timeout` to 0, meaning no limit, so a black-holed
             # address then hangs on the OS TCP timeout (measured: ~31s against a
             # non-routable IP, regardless of what `timeout` was set to).
+            # HTTP.jl strips `Authorization` on a cross-origin redirect but forwards the V5
+            # `token` header, so V5 does not follow redirects; its endpoints need none.
             r = HTTP.get(url; query = params, headers = headers,
                          connect_timeout = t.timeout,
                          read_idle_timeout = t.timeout,
                          max_decompressed_size = t.max_response_bytes,
+                         redirect = !is_v5(endpoint),
                          status_exception = false, retry = false)
             EpiResponse(r.status, Vector{UInt8}(r.body), _headers_dict(r.headers), key)
         catch e

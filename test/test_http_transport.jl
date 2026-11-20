@@ -42,6 +42,11 @@ using EpiDataKit: HTTPTransport, fetch_raw, ratelimit, body_string, TransportErr
         elseif path == "/lowquota"
             return HTTP.Response(200,
                 ["X-My-Limit" => "60", "X-My-Remaining" => "3"], "hello")
+        elseif path == "/v5base/v5/redirect"
+            # `localhost` is a different origin from `127.0.0.1`, as far as HTTP.jl knows.
+            return HTTP.Response(302, ["Location" => "http://localhost:$(server.bound_port)/leak"], "")
+        elseif path == "/leak"
+            return HTTP.Response(200, "token=$(HTTP.header(req, "token", ""))")
         end
         return HTTP.Response(404, "<html>not found</html>")
     end
@@ -112,6 +117,14 @@ using EpiDataKit: HTTPTransport, fetch_raw, ratelimit, body_string, TransportErr
             @test occursin("token=s3cret", body)
             @test occursin("auth=\n", body)
             @test !occursin("s3cret", split(body, '\n')[1])
+        end
+
+        @testset "a V5 redirect is not followed, so the token stays home" begin
+            # HTTP.jl drops `Authorization` on a cross-origin hop but would forward `token`.
+            t = transport(api_key = "s3cret", v5_base_url = base * "/v5base/")
+            resp = fetch_raw(t, "v5/redirect", Dict("signal" => "x"))
+            @test resp.status == 302
+            @test !haskey(hits, "/leak")
         end
 
         @testset "no key means no Authorization header" begin
