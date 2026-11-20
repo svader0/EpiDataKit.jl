@@ -9,7 +9,6 @@ function v5_entry(ep, body, params; status = 200)
 end
 
 const V5Q = (source = "nssp", signal = "pct_ed_visits_covid", geo_type = "state")
-const V5_META = """{"nssp":{"signals":["pct_ed_visits_covid"],"geo_types":["state"]}}"""
 const V5_HEADER = "signal,report_time,geo_type,geo_value,fill_method,reference_time,value\n"
 
 @testset "fetch_v5" begin
@@ -48,6 +47,9 @@ const V5_HEADER = "signal,report_time,geo_type,geo_value,fill_method,reference_t
         @test_throws ValidationError format_v5_times(Date(2026, 1, 3); bare_dates = false)
         @test format_v5_times(Date(2026, 1, 1):Date(2026, 1, 2); bare_dates = false) ==
               "2026-01-01:2026-01-02"
+        # An empty list would go out as `reference_times=`.
+        @test_throws ValidationError format_v5_times(Date[])
+        @test_throws ValidationError v5_params(; V5Q..., reference_times = Date[])
     end
 
     @testset "snapshot_date forms" begin
@@ -62,6 +64,11 @@ const V5_HEADER = "signal,report_time,geo_type,geo_value,fill_method,reference_t
     @testset "age_group becomes extra_keys" begin
         @test v5_params(; V5Q..., age_group = ["0-4", "all"])["extra_keys"] ==
               "age_group:0-4,age_group:all"
+        @test v5_params(; V5Q..., age_group = " ALL ")["extra_keys"] == "age_group:all"
+        # Each would go out as an empty filter: `extra_keys=` or `extra_keys=age_group:`.
+        @test_throws ValidationError v5_params(; V5Q..., age_group = String[])
+        @test_throws ValidationError v5_params(; V5Q..., age_group = "")
+        @test_throws ValidationError v5_params(; V5Q..., age_group = ["all", " "])
     end
 
     @testset "a typo is caught before any request" begin
@@ -73,6 +80,7 @@ const V5_HEADER = "signal,report_time,geo_type,geo_value,fill_method,reference_t
         @test_throws MethodError fetch_snapshot(; V5Q..., report_time = ">=2026-10-01", transport = t)
         @test_throws MethodError fetch_archive(; V5Q..., snapshot_date = Date(2026, 10, 1),
                                                transport = t)
+        @test_throws ValidationError fetch_snapshot(; V5Q..., time_type = :month, transport = t)
         @test isempty(t.calls)
     end
 
@@ -88,11 +96,13 @@ const V5_HEADER = "signal,report_time,geo_type,geo_value,fill_method,reference_t
         @test length(t.calls) == 1
     end
 
+    meta = v5_entry(V5_METADATA_ENDPOINT, fixture("v5_metadata.json"), Dict{String,String}())
+
     @testset "a misspelled signal names the real ones" begin
         q = (; V5Q..., signal = "pct_ed_visits_covd")
         t = MockTransport(Dict(
             v5_entry(V5_SNAPSHOT_ENDPOINT, fixture("v5_snapshot_noresults.csv"), v5_params(; q...)),
-            v5_entry(V5_METADATA_ENDPOINT, V5_META, Dict("source" => "nssp"))))
+            meta))
         err = try fetch_snapshot(; transport = t, q...) catch e e end
         @test err isa ValidationError
         @test occursin("pct_ed_visits_covid", err.msg)
@@ -103,16 +113,16 @@ const V5_HEADER = "signal,report_time,geo_type,geo_value,fill_method,reference_t
         q = (; V5Q..., snapshot_date = Date(1990, 1, 1))
         t = MockTransport(Dict(
             v5_entry(V5_SNAPSHOT_ENDPOINT, fixture("v5_snapshot_noresults.csv"), v5_params(; q...)),
-            v5_entry(V5_METADATA_ENDPOINT, V5_META, Dict("source" => "nssp"))))
+            meta))
         @test_throws NoResultsError fetch_snapshot(; transport = t, q...)
+        @test length(t.calls) == 2
     end
 
     @testset "one reference date resolves its resolution from metadata" begin
         q = (; V5Q..., geo_values = "ca", reference_times = Date(2026, 1, 3))
         body = V5_HEADER * "pct_ed_visits_covid,2026-01-10T12:00:00Z,state,ca,source,2026-01-03,0.5\n"
-        for (dates, width) in ((["2025-12-27", "2026-01-03"], Day(6)),
-                               (["2026-01-02", "2026-01-03"], Day(0)))
-            ref = """{"reference_times":["$(join(dates, "\",\""))"]}"""
+        for (ref, width) in ((fixture("v5_reference_times.json"), Day(6)),
+                             ("""{"reference_times":["2026-01-02","2026-01-03"]}""", Day(0)))
             t = MockTransport(Dict(
                 v5_entry(V5_SNAPSHOT_ENDPOINT, body, v5_params(; q...)),
                 v5_entry(V5_REFERENCE_TIMES_ENDPOINT, ref,
@@ -121,6 +131,12 @@ const V5_HEADER = "signal,report_time,geo_type,geo_value,fill_method,reference_t
             @test tbl[1].period_end - tbl[1].period_start == width
             @test length(t.calls) == 2
         end
+
+        # Stated outright, a Saturday-only result is taken as daily with no lookup.
+        t = MockTransport(Dict(v5_entry(V5_SNAPSHOT_ENDPOINT, body, v5_params(; q...))))
+        tbl = fetch_snapshot(; transport = t, time_type = :day, q...)
+        @test tbl[1].period_end == tbl[1].period_start
+        @test length(t.calls) == 1
     end
 
     @testset "fetch_archive returns revisions" begin

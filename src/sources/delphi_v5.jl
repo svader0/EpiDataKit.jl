@@ -42,8 +42,11 @@ function format_v5_times(x; bare_dates::Bool = true)
         d === nothing && throw(ValidationError("cannot interpret time selection $(repr(s))"))
         return one(d)
     end
-    one(v::Union{AbstractVector,Tuple}) = join((something(format_v5_times(e; bare_dates), "*")
-                                                for e in v), ",")
+    function one(v::Union{AbstractVector,Tuple})
+        # An empty list would reach the wire as an empty filter, e.g. `reference_times=`.
+        isempty(v) && throw(ValidationError("empty time selection"))
+        return join((something(format_v5_times(e; bare_dates), "*") for e in v), ",")
+    end
     one(other) = throw(ValidationError("cannot interpret time selection of type $(typeof(other))"))
     return one(x)
 end
@@ -73,7 +76,7 @@ function v5_params(;
 )
     snapshot_date !== nothing && report_time !== nothing && throw(ValidationError(
         "snapshot_date and report_time are mutually exclusive"))
-    level = parse_geo_level(geo_type isa GeoLevel ? GEO_TYPE_NAMES[geo_type] : geo_type)
+    level = parse_geo_level(geo_type)
     params = Dict{String,String}(
         "source" => _v5_name(source, "source"),
         "signal" => _v5_name(signal, "signal"),
@@ -90,7 +93,8 @@ function v5_params(;
     fill_method === nothing || (params["fill_method"] = _v5_name(fill_method, "fill_method"))
     if age_group !== nothing
         ags = age_group isa AbstractString ? [age_group] : collect(age_group)
-        params["extra_keys"] = join(("age_group:$v" for v in ags), ",")
+        isempty(ags) && throw(ValidationError("age_group is empty"))
+        params["extra_keys"] = join(("age_group:" * _v5_name(v, "age_group") for v in ags), ",")
     end
     if snapshot_date isa Date
         params["snapshot_date"] = string(snapshot_date)
@@ -139,12 +143,13 @@ function v5_reference_times(transport, source, signal)
 end
 
 # V5 answers a misspelled signal or geo_type exactly like an empty window, so the metadata
-# is the only way to tell the two apart.
+# is the only way to tell the two apart. Unfiltered, because that is the reply shape the
+# fixtures record and check_upstream.jl checks.
 function _explain_empty(transport, params)
     meta = try
-        decode_v5_json(fetch_raw(transport, V5_METADATA_ENDPOINT,
-                                 Dict("source" => params["source"])))
-    catch
+        decode_v5_json(fetch_raw(transport, V5_METADATA_ENDPOINT, Dict{String,String}()))
+    catch e
+        e isa InterruptException && rethrow()
         return nothing
     end
     entry = get(meta, Symbol(params["source"]), nothing)
@@ -162,7 +167,9 @@ function _explain_empty(transport, params)
     return nothing
 end
 
-function _fetch_v5(transport, endpoint, params)
+function _fetch_v5(transport, endpoint, params, time_type)
+    time_type in (nothing, :day, :week) || throw(ValidationError(
+        "time_type must be :day or :week, got $(repr(time_type))"))
     src = DelphiV5(Symbol(params["source"]))
     raw = try
         decode_response(src, fetch_raw(transport, endpoint, params))
@@ -170,7 +177,7 @@ function _fetch_v5(transport, endpoint, params)
         e isa NoResultsError && _explain_empty(transport, params)
         rethrow()
     end
-    tt = v5_time_type(raw)
+    tt = time_type === nothing ? v5_time_type(raw) : time_type
     # One reference date cannot tell a week from a day; the signal's full date list can.
     if tt === nothing
         # ponytail: a signal with a single reference date ever reads as daily
@@ -182,7 +189,7 @@ end
 """
     fetch_snapshot(; source, signal, geo_type, geo_values = nothing, reference_times = nothing,
                    fill_method = nothing, age_group = nothing, snapshot_date = nothing,
-                   transport = HTTPTransport()) -> EpiTable
+                   time_type = nothing, transport = HTTPTransport()) -> EpiTable
 
 Fetch the latest (or, with `snapshot_date`, the as-of) value of a signal from the V5
 cast-API.
@@ -201,19 +208,24 @@ V5 reports neither time resolution nor typos, so two cases cost one extra reques
 result (a metadata lookup, to turn a misspelled signal or `geo_type` into a
 [`ValidationError`](@ref) listing the real ones; otherwise [`NoResultsError`](@ref) stands)
 and a result with a single reference date (to tell a weekly signal from a daily one).
+
+`time_type` (`:day` or `:week`) states the resolution rather than guessing it, and skips
+that second lookup. The guess reads all-Saturday dates as weekly, so a daily signal queried
+only on Saturdays, such as a `_7dav` one sampled once a week, needs `time_type = :day`.
 """
 function fetch_snapshot(; source, signal, geo_type, geo_values = nothing,
                         reference_times = nothing, fill_method = nothing, age_group = nothing,
-                        snapshot_date = nothing, transport::AbstractTransport = HTTPTransport())
+                        snapshot_date = nothing, time_type::Union{Symbol,Nothing} = nothing,
+                        transport::AbstractTransport = HTTPTransport())
     params = v5_params(; source, signal, geo_type, geo_values, reference_times, fill_method,
                        age_group, snapshot_date)
-    return _fetch_v5(transport, V5_SNAPSHOT_ENDPOINT, params)
+    return _fetch_v5(transport, V5_SNAPSHOT_ENDPOINT, params, time_type)
 end
 
 """
     fetch_archive(; source, signal, geo_type, geo_values = nothing, reference_times = nothing,
                   fill_method = nothing, age_group = nothing, report_time = nothing,
-                  transport = HTTPTransport()) -> EpiTable
+                  time_type = nothing, transport = HTTPTransport()) -> EpiTable
 
 Fetch every revision of a signal, one row per `(period, issue)`. `report_time` selects
 issues with an expression such as `">=2026-10-01"` or a date range; a bare `Date` is
@@ -222,8 +234,9 @@ cases, are as in [`fetch_snapshot`](@ref).
 """
 function fetch_archive(; source, signal, geo_type, geo_values = nothing,
                        reference_times = nothing, fill_method = nothing, age_group = nothing,
-                       report_time = nothing, transport::AbstractTransport = HTTPTransport())
+                       report_time = nothing, time_type::Union{Symbol,Nothing} = nothing,
+                       transport::AbstractTransport = HTTPTransport())
     params = v5_params(; source, signal, geo_type, geo_values, reference_times, fill_method,
                        age_group, report_time)
-    return _fetch_v5(transport, V5_ARCHIVE_ENDPOINT, params)
+    return _fetch_v5(transport, V5_ARCHIVE_ENDPOINT, params, time_type)
 end

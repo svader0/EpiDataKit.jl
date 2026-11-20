@@ -215,7 +215,8 @@ Guess the resolution, since V5 does not report it: all-Saturday dates read as we
 function v5_time_type(dates::AbstractVector{Date})
     ds = unique(dates)
     length(ds) < 2 && return nothing
-    # ponytail: V5 reports no resolution; a daily signal queried only on Saturdays reads as weekly
+    # ponytail: V5 reports no resolution; a daily signal queried only on Saturdays reads as
+    # weekly. The fetchers' `time_type` keyword overrides it.
     return all(d -> dayofweek(d) == Saturday, ds) ? :week : :day
 end
 v5_time_type(raw) = v5_time_type(Date[skipmissing(
