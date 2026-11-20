@@ -68,6 +68,11 @@ function synthetic_table(n::Int = N; seed::Int = rand_seed)
         issue = issue,
         lag = lag,
         missing_code = mcode,
+        # V3-shaped rows, which carry none of the V5 columns.
+        fill_method = Vector{Union{String,Missing}}(missing, n),
+        age_group = Vector{Union{String,Missing}}(missing, n),
+        ci_lower = Vector{Union{Float64,Missing}}(missing, n),
+        ci_upper = Vector{Union{Float64,Missing}}(missing, n),
     ))
 end
 
