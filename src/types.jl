@@ -152,6 +152,16 @@ describing coverage rather than measurements. Read by [`catalog`](@ref).
 """
 struct DelphiCovidcastMeta <: AbstractSource end
 
+"""
+    DelphiV5(source)
+
+The Delphi Epidata V5 cast-API. V5 rows carry no `source` column, so the source name
+comes from the request and is stored here.
+"""
+struct DelphiV5 <: AbstractSource
+    source::Symbol
+end
+
 # --------------------------------------------------
 #                   CATALOG SCHEMA
 # --------------------------------------------------

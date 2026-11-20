@@ -193,3 +193,82 @@ A zero-row table with the right column types, for code paths that need a valid e
 result rather than an exception.
 """
 empty_table() = StructArray{EpiObservation}(_columns(()))
+
+const V5_COLUMNS = (:signal, :report_time, :geo_type, :geo_value, :fill_method,
+                    :reference_time, :age_group, :ci_lower, :ci_upper, :value)
+
+# Reference times are ISO dates and report times UTC timestamps; the first 10 characters
+# are the calendar date either way.
+_v5_date(::Union{Missing,Nothing}) = missing
+_v5_date(d::Date) = d
+function _v5_date(s::AbstractString)
+    t = strip(s)
+    isempty(t) ? missing : Date(first(t, 10))
+end
+
+"""
+    v5_time_type(dates) -> :week | :day | nothing
+
+Guess the resolution, since V5 does not report it: all-Saturday dates read as weekly.
+`nothing` when fewer than two distinct dates make the guess meaningless.
+"""
+function v5_time_type(dates::AbstractVector{Date})
+    ds = unique(dates)
+    length(ds) < 2 && return nothing
+    # ponytail: V5 reports no resolution; a daily signal queried only on Saturdays reads as weekly
+    return all(d -> dayofweek(d) == Saturday, ds) ? :week : :day
+end
+v5_time_type(raw) = v5_time_type(Date[skipmissing(
+    _v5_date(Tables.getcolumn(r, :reference_time)) for r in Tables.rows(raw))...])
+
+"""
+    standardize(src::DelphiV5, raw; time_type = nothing) -> EpiTable
+
+`time_type` (`:day` or `:week`) overrides the guess from [`v5_time_type`](@ref). `lag`
+is computed in the signal's own units, matching V3.
+"""
+function standardize(src::DelphiV5, raw; time_type::Union{Symbol,Nothing} = nothing)
+    avail = _colnames(raw)
+    if avail !== nothing
+        extra = sort!(collect(setdiff(avail, V5_COLUMNS)))
+        isempty(extra) || throw(ValidationError(
+            "unexpected V5 key column(s) $(join(extra, ", ")); each distinct value is a " *
+            "separate series, so filter on that key (extra_keys) before standardizing"))
+    end
+    tt = time_type === nothing ? v5_time_type(raw) : time_type
+    tt === nothing && throw(ValidationError(
+        "cannot tell daily from weekly from a single reference date; " *
+        "pass time_type = :day or :week"))
+    rows = Tables.rows(raw)
+    c = _columns(rows)
+
+    for row in rows
+        lvl = parse_geo_level(string(_get(row, :geo_type, avail)))
+        pe = _v5_date(_get(row, :reference_time, avail))
+        ps = tt === :week ? pe - Day(6) : pe
+        iss = _v5_date(_get(row, :report_time, avail))
+        days = Dates.value(iss - ps)
+        v = coerce_float(_get(row, :value, avail))
+        fm, ag = _get(row, :fill_method, avail), _get(row, :age_group, avail)
+
+        push!(c.source, src.source)
+        push!(c.signal, _require_symbol(_get(row, :signal, avail), :signal))
+        push!(c.geo_level, lvl)
+        push!(c.geo_id, normalize_geo_id(lvl, _get(row, :geo_value, avail)))
+        push!(c.period_start, ps)
+        push!(c.period_end, pe)
+        push!(c.value, v)
+        push!(c.stderr, missing)
+        push!(c.sample_size, missing)
+        push!(c.issue, iss)
+        push!(c.lag, tt === :week ? fld(days, 7) : days)
+        # V5 dropped missingness codes.
+        push!(c.missing_code, v === missing ? OTHER : NOT_MISSING)
+        push!(c.fill_method, fm === missing ? missing : String(fm))
+        push!(c.age_group, ag === missing ? missing : String(ag))
+        push!(c.ci_lower, coerce_float(_get(row, :ci_lower, avail)))
+        push!(c.ci_upper, coerce_float(_get(row, :ci_upper, avail)))
+    end
+
+    return StructArray{EpiObservation}(c)
+end

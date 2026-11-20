@@ -1,0 +1,1 @@
+{"detail":[{"type":"value_error","loc":["query"],"msg":"Value error, signal is required. Discover available values: /epidata/v5/metadata/?source=nssp","input":{"source":"nssp","geo_type":"state","format":"csv"},"ctx":{"error":{}}}],"code":"validation_error"}

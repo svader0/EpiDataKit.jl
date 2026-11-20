@@ -1,0 +1,11 @@
+signal,report_time,geo_type,geo_value,fill_method,reference_time,value
+pct_ed_visits_covid,2026-04-29T12:00:00Z,state,ny,source,2026-01-31,0.5199999809265137
+pct_ed_visits_covid,2026-04-29T12:00:00Z,state,ny,source,2026-01-17,0.5600000023841858
+pct_ed_visits_covid,2026-04-29T12:00:00Z,state,ny,source,2026-01-24,0.5099999904632568
+pct_ed_visits_covid,2026-04-29T12:00:00Z,state,ny,source,2026-01-10,0.6200000047683716
+pct_ed_visits_covid,2026-04-29T12:00:00Z,state,ny,source,2026-01-03,0.7099999785423279
+pct_ed_visits_covid,2026-08-26T12:00:00Z,state,ca,source,2026-01-31,0.15000000596046448
+pct_ed_visits_covid,2026-08-26T12:00:00Z,state,ca,source,2026-01-24,0.15000000596046448
+pct_ed_visits_covid,2026-08-05T12:00:00Z,state,ca,source,2026-01-10,0.1599999964237213
+pct_ed_visits_covid,2026-08-05T12:00:00Z,state,ca,source,2026-01-03,0.18000000715255737
+pct_ed_visits_covid,2026-08-05T12:00:00Z,state,ca,source,2026-01-17,0.14000000059604645

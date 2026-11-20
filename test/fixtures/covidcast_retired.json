@@ -1,0 +1,1 @@
+{"epidata": [], "message": "this API no longer provides data with time values after 2026-09-22; it has been retired in favor of cast-api / epidata-etl. see https://cmu-delphi.github.io/delphi-epidata/api/v5.html (time_values is entirely after the cutoff)", "result": -3}
