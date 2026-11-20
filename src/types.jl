@@ -52,6 +52,12 @@ as reported. V5 does not, so for V5 rows it is computed in the signal's own unit
 convention. `issue - period_end` gives days regardless, and this schema does not record the
 time resolution. Nowcast evaluation filters on lag directly, so it is worth a column.
 
+On a weekly signal `issue` means different things in V3 and V5 rows: V3 stores the
+Saturday ending the issue week, V5 the UTC date of the report. `lag` agrees across the two,
+but an `issue <= d` filter does not. Only the date of a V5 `report_time` is kept, so two
+revisions reported on the same UTC day would share an `issue` in a [`fetch_archive`](@ref)
+result.
+
 `fill_method`, `age_group`, `ci_lower` and `ci_upper` match epidatr's V5 output. They are
 `missing` on V3 rows, while `stderr` and `sample_size` are `missing` on V5 rows.
 """

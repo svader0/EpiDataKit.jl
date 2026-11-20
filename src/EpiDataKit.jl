@@ -5,7 +5,7 @@ Fetch public health surveillance data, standardize it into one tidy schema, and 
 as Arrow for downstream modeling packages.
 
 ```julia
-using EpiDataKit
+using EpiDataKit, Dates
 
 tbl = fetch_snapshot(
     source          = "nssp",

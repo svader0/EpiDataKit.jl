@@ -175,7 +175,8 @@ V5 metadata gives one extent per source, not per signal, so every signal inherit
 source's dates and `num_locations`, `min_lag` and `max_lag` are `missing`. A geo type missing
 from [`GEO_TYPE_MAP`](@ref) (`sewershed`, `misc` and the like) is skipped silently: those are
 permanent and have no [`GeoLevel`](@ref), so a warning would fire on every call. A source
-whose extent is not a pair of dates is skipped too.
+whose extent is null or empty is skipped too. Nothing else is: a non-date string or a
+missing key still throws.
 """
 function v5_catalog_entries(meta)
     entries = CatalogEntry[]
@@ -183,7 +184,11 @@ function v5_catalog_entries(meta)
         first_ref = _v5_date(info.reference_time_range.first)
         latest = _v5_date(info.reference_time_range.latest)
         (ismissing(first_ref) || ismissing(latest)) && continue
-        # ponytail: a daily source whose first and latest dates are both Saturdays reads as weekly
+        # ponytail: two dates are a thin guess. A source whose first date is not a Saturday
+        # reads as daily (pophive starts on a Sunday), and a daily one whose first and latest
+        # dates are both Saturdays reads as weekly (sleepcycle, about one day in seven).
+        # Fetches guess from the returned dates, so the two can disagree; per-signal
+        # reference_times would settle it at one request per signal.
         tt = something(v5_time_type([first_ref, latest]), :day)
         first_period = tt === :week ? first_ref - Day(6) : first_ref
         last_issue = _v5_date(info.report_time_range.latest)
@@ -238,7 +243,11 @@ The `fetch_snapshot` half comes from Delphi's V5 `metadata/` endpoint. It report
 range per source rather than per signal, so each signal inherits its source's range and
 `num_locations`, `min_lag` and `max_lag` are `missing`. Geographic levels this package has no
 [`GeoLevel`](@ref) for are left out without a warning. V5 does not report a time resolution:
-a source whose first and latest dates are both Saturdays is listed as weekly.
+a source whose first and latest dates are both Saturdays is listed as weekly. That guess can
+be wrong both ways: a source whose first date is not a Saturday is listed as daily
+(`pophive` starts on a Sunday), and a daily source is listed as weekly whenever its first and
+latest dates both fall on a Saturday (`sleepcycle`, about one day in seven). A fetch guesses from the dates it
+returns instead, so the catalog and a fetch can disagree; `time_type` on the fetch settles it.
 
 The `fluview` rows are the signal list, not verified coverage: they say the measure exists
 somewhere in the endpoint, not that every level of it returns data. `num_age_2` is a known
@@ -249,6 +258,8 @@ An unfiltered call is two requests: `covidcast_meta` against a cap of 60/hour fo
 callers, about 400 KB, and V5 `metadata/`, about 28 KB. Bind the result rather than calling this in a loop. `source` and
 `time_type` narrow the `covidcast_meta` request itself, and `signal` narrows it too when
 `source` is given. The V5 request is never narrowed. `geo_type` filters the result, for the reason [`catalog_params`](@ref) explains.
+Every call except `source = "fluview"` needs both hosts up, even one whose filters can only
+match V3 datasets.
 
 Throws [`NoResultsError`](@ref) when no dataset matches at all. The result is a
 [`CatalogTable`](@ref), not an [`EpiTable`](@ref).

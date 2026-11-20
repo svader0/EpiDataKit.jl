@@ -63,13 +63,17 @@ The table is a Tables.jl source, so it goes straight into a `DataFrame` when you
 using DataFrames
 
 df = DataFrame(tbl; copycols=false)
-# 2×11 DataFrame
-#  Row │ source  signal               geo_level  geo_id  period_start  period_end  v ⋯
-#      │ Symbol  Symbol               GeoLevel   String  Dates.Date    Dates.Date  F ⋯
-# ─────┼──────────────────────────────────────────────────────────────────────────────
-#    1 │ nssp    pct_ed_visits_covid  STATE      ca      2026-05-17    2026-05-23    ⋯
-#    2 │ nssp    pct_ed_visits_covid  STATE      ca      2026-05-24    2026-05-30    ⋯
-#                                                                    5 columns omitted
+# 10×16 DataFrame
+#  Row │ source  signal               geo_level  geo_id  period_start  period_end  ⋯
+#      │ Symbol  Symbol               GeoLevel   String  Date          Date        ⋯
+# ─────┼────────────────────────────────────────────────────────────────────────────
+#    1 │ nssp    pct_ed_visits_covid  STATE      ny      2026-01-25    2026-01-31  ⋯
+#    2 │ nssp    pct_ed_visits_covid  STATE      ny      2026-01-11    2026-01-17
+#    3 │ nssp    pct_ed_visits_covid  STATE      ny      2026-01-18    2026-01-24
+#   ⋮  │   ⋮              ⋮               ⋮        ⋮          ⋮            ⋮       ⋱
+#    9 │ nssp    pct_ed_visits_covid  STATE      ca      2025-12-28    2026-01-03
+#   10 │ nssp    pct_ed_visits_covid  STATE      ca      2026-01-11    2026-01-17  ⋯
+#                                                      10 columns and 5 rows omitted
 ```
 
 The V3 functions below still work for data up to 2026-09-22. Weekly signals accept real
@@ -139,7 +143,7 @@ website:
 ```julia
 cat = catalog()
 length(cat)
-# 3014
+# 3014, for example; the count changes as Delphi adds and retires signals
 
 covid = filter(e -> e.source === :nssp && e.signal === :pct_ed_visits_covid, cat)
 covid[1]
@@ -180,7 +184,7 @@ tbl[1]
 ```julia
 sources = unique(cat.source)
 length(sources)
-# 27
+# 27, for example
 
 print(filter(in((:nssp, :chng, :fluview)), sources))
 # [:chng, :nssp, :fluview]
@@ -194,7 +198,8 @@ filtering and `DataFrame` conversion both work:
 filter(e -> e.source === :nssp && e.geo_level == STATE, cat)
 ```
 
-Keywords narrow it, and `source` makes the request much smaller:
+Keywords narrow it, and `source` makes the `covidcast_meta` request much smaller. The V5
+`metadata/` request is the same whatever the keywords, so V5 entries are filtered locally:
 
 ```julia
 catalog(source = "nssp")
@@ -202,8 +207,8 @@ catalog(source = "nssp", signal = "pct_ed_visits_covid")
 catalog(time_type = "week", geo_type = "county")
 ```
 
-One call is one request, and the unfiltered reply is about 400 KB, so bind the result
-instead of calling it in a loop.
+The unfiltered `covidcast_meta` reply alone is about 400 KB, so bind the result instead of
+calling it in a loop.
 
 The `fluview` entries are the exception to the coverage columns. The API publishes only a
 whole-table summary for that endpoint, not per-signal extents, so those rows carry the
@@ -229,7 +234,7 @@ revs = fetch_archive(
 ```
 
 `fetch_snapshot(snapshot_date = …)` reconstructs what was known on a given date, which
-makes backtesting convenient. On V3, `as_of` does the same:
+makes backtesting convenient. It is V5's counterpart to V3's `as_of`:
 
 ```julia
 past = fetch_snapshot(
@@ -276,9 +281,14 @@ end
 
 `lag` is counted in the signal's own time units, days for a daily signal and weeks for a
 weekly one. V3 rows carry it as the source reported it; V5 rows compute it client-side from
-`issue` minus `period_start`, since V5 reports none. `issue - period_end` gives days either
-way, and the schema deliberately does not record the time resolution, so a derived lag
-would be seven times off for weekly signals with nothing to signal the mistake.
+`issue` minus `period_start` at fetch time, since V5 reports none. `issue - period_end`
+gives days either way. The schema deliberately does not record the time resolution, so a
+lag derived later from the table alone could not know its units; that is why it is a column.
+
+On a weekly signal, `issue` means different things in V3 and V5 rows. V3 stores the
+Saturday ending the issue week, V5 the UTC date of the report. `lag` agrees across the two,
+but an `issue <= d` filter does not. Only the date of a V5 `report_time` is kept, so two
+revisions reported on the same UTC day would share an `issue` in a `fetch_archive` result.
 
 The last four fields match epidatr's V5 output. They are `missing` on V3 rows, while `stderr`
 and `sample_size` are `missing` on V5 rows.
@@ -330,7 +340,7 @@ Working now: the `covidcast` and `fluview` endpoints end to end — fetch, retry
 backoff, standardize, Arrow round-trip — plus `catalog` for discovering what is available,
 all with an offline test suite.
 
-Not yet: `catalog` does not cache, so each call costs a request, and `fetch_covidcast` does
+Not yet: `catalog` does not cache, so each call repeats its requests, and `fetch_covidcast` does
 not check a signal name against it before sending. Also absent: a rate limiter, concurrent
 chunked fetch, and an incremental on-disk cache.
 

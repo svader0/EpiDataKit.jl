@@ -199,7 +199,9 @@ tbl = fetch_snapshot(source = "nssp", signal = "pct_ed_visits_covid", geo_type =
                      geo_values = ["ca", "ny"], reference_times = Date(2026, 1, 1):Date(2026, 1, 31))
 ```
 
-`geo_values` and `reference_times` filter server-side. `lag` is computed client-side from
+`geo_values` and `reference_times` filter server-side. A weekly source dates each week by
+the Saturday that ends it, so weekly `reference_times` must include that Saturday:
+`Date(2026, 1, 1)` alone matches nothing on `nssp`. `lag` is computed client-side from
 `issue` and `period_start`, in the signal's own units, and `stderr` and `sample_size` are
 `missing` because V5 does not report them. When `fill_method` is omitted the server picks
 its own default, which varies by source.
@@ -229,8 +231,10 @@ end
 
 Fetch every revision of a signal, one row per `(period, issue)`. `report_time` selects
 issues with an expression such as `">=2026-10-01"` or a date range; a bare `Date` is
-rejected because a report time is a timestamp. The other keywords, and the extra-request
-cases, are as in [`fetch_snapshot`](@ref).
+rejected because a report time is a timestamp. A `Date` range's upper bound goes out as a
+date, which upstream reads as the start of that day, so reports later that day fall outside
+it; use `"<=YYYY-MM-DDTHH:MM:SSZ"` for an exact bound. The other keywords, and the
+extra-request cases, are as in [`fetch_snapshot`](@ref).
 """
 function fetch_archive(; source, signal, geo_type, geo_values = nothing,
                        reference_times = nothing, fill_method = nothing, age_group = nothing,
